@@ -108,20 +108,29 @@ The application runs on port 8282 by default. Requires:
 
 ## URL Base and Reverse Proxy
 
-The `url_base` config option allows running Decypharr under a subpath (e.g., `/decypharr/`). When using a reverse proxy like nginx, the proxy must preserve the full path:
+The `url_base` config option allows running Decypharr under a subfolder (e.g., `/decypharr/`).
+
+### Key Implementation Details
+
+- Routes are mounted under `url_base` via Chi's `r.Route()` in `pkg/server/server.go`
+- The `StripSlashes` middleware requires routes to be defined without trailing slash (handled automatically)
+- All redirects use the `redirectTo()` helper in `pkg/web/middlewares.go` which prepends the URL base
+- Cookies use `Path: "/"` which works for all subpaths
+
+### Nginx Configuration
+
+Example configs are in `examples/nginx/`:
+- `subfolder.conf` - For running at `/decypharr/` (recommended)
+- `subdomain.conf` - For running at a dedicated subdomain
+
+Full documentation: `docs/docs/guides/reverse-proxy.md`
 
 ```nginx
-# Correct - preserves the path
+# Subfolder setup - proxy_pass must include the full path
 location /decypharr/ {
+    include /etc/nginx/snippets/proxy.conf;
     proxy_pass http://localhost:8282/decypharr/;
-    proxy_set_header Host $host;
-    proxy_set_header X-Real-IP $remote_addr;
-}
-
-# Wrong - strips the path, will break routing
-location /decypharr/ {
-    proxy_pass http://localhost:8282/;
 }
 ```
 
-All routes are mounted under the `url_base` prefix via Chi's `r.Route()` in `pkg/server/server.go`.
+When using external auth (Authelia, etc.), bypass `/api/` routes so *Arr apps can use built-in API token auth.
