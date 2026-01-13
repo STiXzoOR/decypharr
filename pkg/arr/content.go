@@ -59,6 +59,9 @@ func (a *Arr) GetMedia(mediaId string) ([]Content, error) {
 	for _, d := range data {
 		resp, err = a.Request(http.MethodGet, fmt.Sprintf("api/v3/episodefile?seriesId=%d", d.Id), nil)
 		if err != nil {
+			if resp != nil {
+				resp.Body.Close()
+			}
 			continue
 		}
 		var ct Content
@@ -76,6 +79,9 @@ func (a *Arr) GetMedia(mediaId string) ([]Content, error) {
 		}()
 		resp, err = a.Request(http.MethodGet, fmt.Sprintf("api/v3/episode?seriesId=%d", d.Id), nil)
 		if err != nil {
+			if resp != nil {
+				resp.Body.Close()
+			}
 			continue
 		}
 		func() {
@@ -121,14 +127,17 @@ func (a *Arr) GetMedia(mediaId string) ([]Content, error) {
 func GetMovies(a *Arr, tvId string) ([]Content, error) {
 	resp, err := a.Request(http.MethodGet, fmt.Sprintf("api/v3/movie?tmdbId=%s", tvId), nil)
 	if err != nil {
+		if resp != nil {
+			resp.Body.Close()
+		}
 		return nil, err
 	}
+	defer resp.Body.Close()
 	if resp.StatusCode == http.StatusNotFound {
 		// This is likely Lidarr or Readarr
 		return nil, fmt.Errorf("failed to get movies: %s", resp.Status)
 	}
 	a.Type = Radarr
-	defer resp.Body.Close()
 	var movies []Movie
 	if err = json.NewDecoder(resp.Body).Decode(&movies); err != nil {
 		return nil, fmt.Errorf("failed to decode movies: %v", err)
@@ -200,8 +209,12 @@ func (a *Arr) searchSonarr(files []ContentFile) error {
 			}
 			resp, err := a.Request(http.MethodPost, "api/v3/command", payload)
 			if err != nil {
+				if resp != nil {
+					resp.Body.Close()
+				}
 				return fmt.Errorf("failed to automatic search: %v", err)
 			}
+			defer resp.Body.Close()
 			if resp.StatusCode >= 300 || resp.StatusCode < 200 {
 				return fmt.Errorf("failed to automatic search. Status Code: %s", resp.Status)
 			}
@@ -225,8 +238,12 @@ func (a *Arr) searchRadarr(files []ContentFile) error {
 	}
 	resp, err := a.Request(http.MethodPost, "api/v3/command", payload)
 	if err != nil {
+		if resp != nil {
+			resp.Body.Close()
+		}
 		return fmt.Errorf("failed to automatic search: %v", err)
 	}
+	defer resp.Body.Close()
 	if statusOk := strconv.Itoa(resp.StatusCode)[0] == '2'; !statusOk {
 		return fmt.Errorf("failed to automatic search. Status Code: %s", resp.Status)
 	}
@@ -314,20 +331,28 @@ func (a *Arr) batchDeleteFiles(files []ContentFile) error {
 		}{
 			EpisodeFileIds: ids,
 		}
-		_, err := a.Request(http.MethodDelete, "api/v3/episodefile/bulk", payload)
+		resp, err := a.Request(http.MethodDelete, "api/v3/episodefile/bulk", payload)
 		if err != nil {
+			if resp != nil {
+				resp.Body.Close()
+			}
 			return err
 		}
+		resp.Body.Close()
 	case Radarr:
 		payload = struct {
 			MovieFileIds []int `json:"movieFileIds"`
 		}{
 			MovieFileIds: ids,
 		}
-		_, err := a.Request(http.MethodDelete, "api/v3/moviefile/bulk", payload)
+		resp, err := a.Request(http.MethodDelete, "api/v3/moviefile/bulk", payload)
 		if err != nil {
+			if resp != nil {
+				resp.Body.Close()
+			}
 			return err
 		}
+		resp.Body.Close()
 	default:
 		return fmt.Errorf("unknown arr type: %s", a.Type)
 	}
