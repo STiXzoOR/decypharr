@@ -453,6 +453,8 @@ func (tb *Torbox) GetFileDownloadLinks(t *types.Torrent) error {
 }
 
 func (tb *Torbox) GetDownloadLink(t *types.Torrent, file *types.File) (types.DownloadLink, error) {
+	// First, validate the file exists on TorBox by making an API call
+	// This ensures we fail fast if the file doesn't exist
 	url := fmt.Sprintf("%s/api/torrents/requestdl/", tb.Host)
 	query := gourl.Values{}
 	query.Add("torrent_id", t.Id)
@@ -492,20 +494,27 @@ func (tb *Torbox) GetDownloadLink(t *types.Torrent, file *types.File) (types.Dow
 		return types.DownloadLink{}, fmt.Errorf("error getting download links")
 	}
 
-	link := *data.Data
-	if link == "" {
-		tb.logger.Error().
-			Str("torrent_id", t.Id).
-			Str("file_id", file.Id).
-			Msg("Torbox API returned empty download link")
-		return types.DownloadLink{}, fmt.Errorf("error getting download links")
-	}
+	// API call succeeded - file exists on TorBox
+	// Now build a permalink with redirect=true instead of using the temporary CDN URL
+	// The CDN URL expires quickly, but the permalink will redirect to a fresh CDN URL on each access
+	permalinkQuery := gourl.Values{}
+	permalinkQuery.Add("token", tb.APIKey)
+	permalinkQuery.Add("torrent_id", t.Id)
+	permalinkQuery.Add("file_id", file.Id)
+	permalinkQuery.Add("redirect", "true")
+	permalink := fmt.Sprintf("%s/api/torrents/requestdl?%s", tb.Host, permalinkQuery.Encode())
+
+	tb.logger.Debug().
+		Str("torrent_id", t.Id).
+		Str("file_id", file.Id).
+		Str("permalink", permalink).
+		Msg("Generated TorBox permalink")
 
 	now := time.Now()
 	dl := types.DownloadLink{
 		Token:        tb.APIKey,
 		Link:         file.Link,
-		DownloadLink: link,
+		DownloadLink: permalink, // Store permalink, not the temporary CDN URL
 		Id:           file.Id,
 		Generated:    now,
 		ExpiresAt:    now.Add(tb.autoExpiresLinksAfter),
