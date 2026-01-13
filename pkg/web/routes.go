@@ -55,6 +55,8 @@ func (wb *Web) Routes() http.Handler {
 			// Config/Auth
 			r.Get("/config", wb.handleGetConfig)
 			r.Post("/config", wb.handleUpdateConfig)
+			r.Get("/config/export", wb.handleExportConfig)
+			r.Post("/config/import", wb.handleImportConfig)
 			r.Post("/refresh-token", wb.handleRefreshAPIToken)
 			r.Post("/update-auth", wb.handleUpdateAuth)
 		})

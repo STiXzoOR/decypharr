@@ -42,7 +42,14 @@
                     </nav>
                 </div>
 
-                <div class="sticky top-20 z-30 flex justify-end mb-6">
+                <div class="sticky top-20 z-30 flex justify-end gap-2 mb-6">
+                    <button type="button" class="btn btn-outline btn-lg" onclick="exportConfig()">
+                        <i class="bi bi-download mr-2"></i>Export
+                    </button>
+                    <label class="btn btn-outline btn-lg cursor-pointer">
+                        <i class="bi bi-upload mr-2"></i>Import
+                        <input type="file" accept=".json" class="hidden" onchange="importConfig(this.files[0])">
+                    </label>
                     <button type="submit" class="btn btn-success btn-lg shadow-lg">
                         <i class="bi bi-save mr-2"></i>Save Configuration
                     </button>
