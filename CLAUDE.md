@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Decypharr is a Go application that implements a mock QBittorrent API with multiple debrid service support. It bridges *Arr applications (Sonarr, Radarr, Lidarr, Readarr) with debrid services (Real-Debrid, Torbox, Debrid Link, All Debrid).
+Decypharr is a Go application that implements a mock QBittorrent API with multiple debrid service support. It bridges \*Arr applications (Sonarr, Radarr, Lidarr, Readarr) with debrid services (Real-Debrid, Torbox, Debrid Link, All Debrid).
 
 ## Build Commands
 
@@ -22,19 +22,51 @@ go build -trimpath -ldflags="-w -s" -o healthcheck cmd/healthcheck/main.go
 ./decypharr --config /path/to/config/dir
 ```
 
+## Frontend Build
+
+The Web UI uses Tailwind CSS with DaisyUI. Frontend assets must be built before running:
+
+```bash
+# Install dependencies (first time only)
+npm install
+
+# Build CSS and minify JS
+npm run build
+
+# Full build including asset downloads
+npm run build-all
+```
+
+## Development
+
+Use [air](https://github.com/cosmtrek/air) for hot reload during development:
+
+```bash
+# Build frontend + start with hot reload (watches .go, .html, .js, .css)
+npm run dev
+
+# Or run air directly (assumes frontend is already built)
+air
+```
+
+Config is read from `data/` directory when using air (see `.air.toml`).
+
 ## Architecture
 
 ### Entry Points
+
 - `main.go` → `cmd/decypharr/main.go` - Application bootstrap with graceful shutdown handling
 - `cmd/healthcheck/main.go` - Docker healthcheck binary
 
 ### Core Services (started in `cmd/decypharr/main.go:startServices`)
+
 1. **HTTP Server** (`pkg/server/`) - Chi router serving all HTTP endpoints
 2. **WebDAV Server** (`pkg/webdav/`) - Per-debrid WebDAV handlers for file access
 3. **Rclone Manager** (`pkg/rclone/`) - Optional filesystem mounting via rclone RC API
 4. **Repair Worker** (`pkg/repair/`) - Scheduled job to detect and fix broken symlinks
 
 ### Request Flow
+
 ```
 *Arr App → QBit API (pkg/qbit/) → Debrid Processing (pkg/debrid/) → Download/Symlink
 ```
@@ -42,32 +74,39 @@ go build -trimpath -ldflags="-w -s" -o healthcheck cmd/healthcheck/main.go
 ### Key Packages
 
 **`pkg/wire/`** - Dependency injection container (singleton)
+
 - `Store` holds all service instances: debrid storage, arr storage, torrent storage, rclone manager, repair
 - Access via `wire.Get()`
 
 **`pkg/debrid/`** - Debrid service abstraction
+
 - `common.Client` interface defines all debrid operations
 - Provider implementations in `providers/{realdebrid,torbox,debridlink,alldebrid}/`
 - `store/` contains caching logic for WebDAV mode
 
 **`pkg/qbit/`** - Mock QBittorrent API
-- Implements `/api/v2/*` endpoints that *Arr apps expect
+
+- Implements `/api/v2/*` endpoints that \*Arr apps expect
 - Routes defined in `routes.go`, torrent operations in `torrent.go`
 
-**`pkg/arr/`** - *Arr application client
+**`pkg/arr/`** - \*Arr application client
+
 - Communicates with Sonarr/Radarr/etc APIs for cleanup, refresh, and repair operations
 - Type inference based on host/name patterns
 
 **`pkg/webdav/`** - WebDAV server implementation
+
 - One handler per debrid provider, mounted at `/webdav/{provider}/`
 - Custom PROPFIND implementation in `propfind.go`
 
 **`internal/config/`** - Configuration management
+
 - Singleton pattern via `config.Get()`
 - Config file at `{config_path}/config.json`
 - Supports hot reload via `config.Reload()`
 
 ### HTTP Routes
+
 - `/` - Web UI (`pkg/web/`)
 - `/api/v2/*` - QBittorrent-compatible API (`pkg/qbit/`)
 - `/webdav/*` - WebDAV endpoints per debrid provider
@@ -75,15 +114,18 @@ go build -trimpath -ldflags="-w -s" -o healthcheck cmd/healthcheck/main.go
 - `/webhooks/tautulli` - Tautulli webhook handler
 
 ### Configuration
+
 Config is JSON-based, stored in the config directory. Key sections:
+
 - `debrids[]` - Debrid service credentials and settings
 - `qbittorrent` - Mock qBit settings (download folder, categories)
-- `arrs[]` - *Arr application connections
+- `arrs[]` - \*Arr application connections
 - `repair` - Repair worker settings
 - `rclone` - Rclone mount configuration
 - `webdav` - WebDAV-specific settings
 
 ### Platform-Specific Code
+
 - `cmd/decypharr/umask_unix.go` / `umask_win.go` - OS-specific umask handling
 - `pkg/rclone/killed_unix.go` / `killed_windows.go` - Process termination detection
 
@@ -102,6 +144,7 @@ Test files: `internal/utils/magnet_test.go`
 ## Docker
 
 The application runs on port 8282 by default. Requires:
+
 - `/dev/fuse` for rclone mounts
 - `SYS_ADMIN` capability
 - `apparmor:unconfined` security option
@@ -120,6 +163,7 @@ The `url_base` config option allows running Decypharr under a subfolder (e.g., `
 ### Nginx Configuration
 
 Example configs are in `examples/nginx/`:
+
 - `subfolder.conf` - For running at `/decypharr/` (recommended)
 - `subdomain.conf` - For running at a dedicated subdomain
 
@@ -133,4 +177,51 @@ location /decypharr/ {
 }
 ```
 
-When using external auth (Authelia, etc.), bypass `/api/` routes so *Arr apps can use built-in API token auth.
+When using external auth (Authelia, etc.), bypass `/api/` routes so \*Arr apps can use built-in API token auth.
+
+## Common Patterns
+
+### HTTP Response Handling
+
+Always close response bodies, even when not reading content:
+
+```go
+resp, err := client.Do(req)
+if err != nil {
+    return err
+}
+defer resp.Body.Close()
+```
+
+### Error Variable Shadowing
+
+Use `:=` correctly with error checks:
+
+```go
+// WRONG - err from outer scope may be nil
+if json.Unmarshal(data, &result) != nil {
+    return err  // returns wrong error!
+}
+
+// CORRECT - captures actual error
+if err := json.Unmarshal(data, &result); err != nil {
+    return err
+}
+```
+
+### Map Initialization
+
+Always initialize maps before use:
+
+```go
+torrent := &types.Torrent{
+    Files: make(map[string]types.File),  // Required!
+}
+```
+
+## Documentation
+
+Full documentation available at the [docs site](https://github.com/sirrobot01/decypharr):
+
+- `docs/docs/guides/` - Setup guides (Zurg, reverse proxy, internal mounting)
+- `docs/docs/features/` - Feature documentation
