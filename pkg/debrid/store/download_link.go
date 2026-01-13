@@ -114,7 +114,7 @@ func (c *Cache) fetchDownloadLink(torrentName, filename, fileLink string) (types
 			if downloadLink.Empty() {
 				return emptyDownloadLink, fmt.Errorf("download link is empty after retry")
 			}
-			return emptyDownloadLink, fmt.Errorf("download link is empty after retry")
+			return downloadLink, nil
 		} else if errors.Is(err, utils.TrafficExceededError) {
 			// This is likely a fair usage limit error
 			return emptyDownloadLink, err
