@@ -42,10 +42,10 @@ type Repair struct {
 	workers     int
 	scheduler   gocron.Scheduler
 
-	debridPathCache sync.Map // debridPath:debridName cache.Emptied after each run
-	torrentsMap     sync.Map //debridName: map[string]*store.CacheTorrent. Emptied after each run
-	mountCheckCache sync.Map // folder path -> bool (accessible). Emptied after each run
-	ctx             context.Context
+	debridPathCache  sync.Map // debridPath:debridName cache.Emptied after each run
+	torrentsMap      sync.Map //debridName: map[string]*store.CacheTorrent. Emptied after each run
+	mountCheckCache  sync.Map // folder path -> bool (accessible). Emptied after each run
+	ctx              context.Context
 }
 
 type JobStatus string
@@ -229,9 +229,9 @@ func (r *Repair) initRun(ctx context.Context) {
 // // onComplete is called when the repair job is completed
 func (r *Repair) onComplete() {
 	// Set the cache maps to nil
-	r.torrentsMap = sync.Map{}     // Clear the torrent map
-	r.debridPathCache = sync.Map{} // Clear debrid path cache
-	r.mountCheckCache = sync.Map{} // Clear mount check cache
+	r.torrentsMap = sync.Map{}       // Clear the torrent map
+	r.debridPathCache = sync.Map{}   // Clear debrid path cache
+	r.mountCheckCache = sync.Map{}   // Clear mount check cache
 }
 
 func (r *Repair) preRunChecks() error {
@@ -524,15 +524,6 @@ func (r *Repair) repairArr(job *Job, _arr string, tmdbId string) ([]arr.ContentF
 // checkMountUp checks if the mounts are accessible at the folder level
 // This validates that the mount points needed for the media files are accessible
 func (r *Repair) checkMountUp(media []arr.Content) error {
-	// For Zurg mode, skip filesystem-based mount checks.
-	// Zurg serves files over HTTP and may not respond well to os.Stat/ReadDir.
-	// The preRunChecks() already verifies Zurg connectivity, and the actual
-	// file availability is checked via HTTP in getZurgBrokenFiles().
-	if r.IsZurg {
-		r.logger.Debug().Msg("Skipping filesystem mount check for Zurg mode")
-		return nil
-	}
-
 	// Collect unique mount folders from all media files
 	mountFolders := make(map[string]bool)
 
@@ -643,14 +634,21 @@ func (r *Repair) getFileBrokenFiles(job *Job, media arr.Content) []arr.ContentFi
 func (r *Repair) getZurgBrokenFiles(job *Job, media arr.Content) []arr.ContentFile {
 	// Use zurg setup to check file availability with zurg
 	// This reduces bandwidth usage significantly
-	//
-	// NOTE: We intentionally skip local fileIsReadable() checks here because:
-	// 1. Zurg serves files over HTTP, not as a traditional filesystem
-	// 2. Local stat/read operations on Zurg symlink targets may fail even when
-	//    files are actually accessible via Zurg's HTTP API
-	// 3. The HTTP check below is the authoritative way to verify Zurg file availability
 
 	brokenFiles := make([]arr.ContentFile, 0)
+
+	// First pass: check local readability for ALL files to detect I/O errors
+	// before making any remote API calls
+	for i := 0; i < len(media.Files); i++ {
+		file := media.Files[i]
+		if err := fileIsReadable(file.Path); err != nil {
+			r.logger.Debug().Err(err).Msgf("File %s is not readable (I/O error)", file.Path)
+			brokenFiles = append(brokenFiles, file)
+			// Remove from media.Files to avoid remote check
+			media.Files = append(media.Files[:i], media.Files[i+1:]...)
+			i-- // Adjust index after removal
+		}
+	}
 
 	uniqueParents := collectFiles(media)
 	tr := &http.Transport{
