@@ -34,21 +34,46 @@ func getSymlinkTarget(file string) string {
 }
 
 func fileIsReadable(filePath string) error {
-	// First check if file exists and is accessible
-	info, err := os.Stat(filePath)
+	// First use Lstat to check the file without following symlinks
+	linfo, err := os.Lstat(filePath)
 	if err != nil {
-		return err
+		return fmt.Errorf("file not accessible: %w", err)
 	}
 
-	// Check if it's a regular file
+	// Check if this is a symlink
+	if linfo.Mode()&os.ModeSymlink != 0 {
+		// It's a symlink - validate the target exists
+		target, err := os.Readlink(filePath)
+		if err != nil {
+			return fmt.Errorf("cannot read symlink target: %w", err)
+		}
+
+		// Make absolute path if needed
+		if !filepath.IsAbs(target) {
+			target = filepath.Join(filepath.Dir(filePath), target)
+		}
+
+		// Check if symlink target exists
+		if _, err := os.Stat(target); err != nil {
+			return fmt.Errorf("symlink target not accessible: %w", err)
+		}
+	}
+
+	// Now check using Stat (follows symlinks) to get the actual file info
+	info, err := os.Stat(filePath)
+	if err != nil {
+		return fmt.Errorf("file stat failed: %w", err)
+	}
+
+	// Check if it's a regular file (after following symlink)
 	if !info.Mode().IsRegular() {
 		return fmt.Errorf("not a regular file")
 	}
 
-	// Try to read the first 1024 bytes
+	// Try to read the first 1024 bytes to detect actual I/O errors
 	err = checkFileStart(filePath)
 	if err != nil {
-		return err
+		return fmt.Errorf("file read failed (I/O error): %w", err)
 	}
 
 	return nil
