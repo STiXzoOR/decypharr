@@ -8,10 +8,12 @@ class TorrentDashboard {
             filteredTorrents: [],
             selectedCategory: '',
             selectedState: '',
+            searchTerm: '',
             sortBy: 'added_on',
             itemsPerPage: 20,
             currentPage: 1,
-            selectedTorrentContextMenu: null
+            selectedTorrentContextMenu: null,
+            selectedTorrentHash: null
         };
 
         this.refs = {
@@ -203,6 +205,13 @@ class TorrentDashboard {
             filtered = filtered.filter(t => t.state?.toLowerCase() === this.state.selectedState.toLowerCase());
         }
 
+        if (this.state.searchTerm) {
+            filtered = filtered.filter(t =>
+                t.name?.toLowerCase().includes(this.state.searchTerm) ||
+                t.hash?.toLowerCase().includes(this.state.searchTerm)
+            );
+        }
+
         // Sort torrents
         filtered = this.sortTorrents(filtered);
 
@@ -277,8 +286,8 @@ class TorrentDashboard {
                                ${isSelected ? 'checked' : ''}>
                     </label>
                 </td>
-                <td class="max-w-xs">
-                    <div class="truncate font-medium" title="${this.escapeHtml(torrent.name)}">
+                <td class="max-w-xs cursor-pointer" onclick="window.torrentDashboard.showTorrentDetails('${torrent.hash}')">
+                    <div class="truncate font-medium hover:text-primary" title="${this.escapeHtml(torrent.name)}">
                         ${this.escapeHtml(torrent.name)}
                     </div>
                 </td>
@@ -556,4 +565,148 @@ class TorrentDashboard {
         };
         return text ? text.replace(/[&<>"']/g, (m) => map[m]) : '';
     }
+
+    handleSearch(value) {
+        this.state.searchTerm = value.toLowerCase();
+        this.state.currentPage = 1;
+        this.filterTorrents();
+        this.renderTorrents();
+        this.updatePagination();
+    }
+
+    async showTorrentDetails(hash) {
+        const torrent = this.state.torrents.find(t => t.hash === hash);
+        if (!torrent) return;
+
+        this.state.selectedTorrentHash = hash;
+
+        // Populate modal using textContent for safety
+        document.getElementById('modalTorrentName').textContent = torrent.name;
+        document.getElementById('modalHash').textContent = hash;
+        document.getElementById('modalSize').textContent = window.decypharrUtils.formatBytes(torrent.size);
+        document.getElementById('modalProgress').textContent = `${(torrent.progress * 100).toFixed(1)}%`;
+        document.getElementById('modalSpeed').textContent = window.decypharrUtils.formatSpeed(torrent.dlspeed || 0);
+        document.getElementById('modalAddedOn').textContent = torrent.added_on ? new Date(torrent.added_on * 1000).toLocaleString() : '-';
+        document.getElementById('modalCategory').textContent = torrent.category || 'none';
+        document.getElementById('modalDebrid').textContent = torrent.debrid || '-';
+        document.getElementById('modalSeeders').textContent = torrent.num_seeds || 0;
+        document.getElementById('modalDownloaded').textContent = window.decypharrUtils.formatBytes(torrent.downloaded || 0);
+
+        // State badge
+        const stateEl = document.getElementById('modalState');
+        stateEl.textContent = torrent.state || 'unknown';
+        stateEl.className = 'badge badge-sm ' + this.getStateBadgeClass(torrent.state);
+
+        // Load files
+        this.loadTorrentFiles(hash);
+
+        // Show modal
+        document.getElementById('torrentDetailsModal').showModal();
+    }
+
+    async loadTorrentFiles(hash) {
+        const filesBody = document.getElementById('modalFilesBody');
+        // Clear and show loading state
+        filesBody.replaceChildren();
+        const loadingRow = document.createElement('tr');
+        const loadingCell = document.createElement('td');
+        loadingCell.colSpan = 3;
+        loadingCell.className = 'text-center';
+        const spinner = document.createElement('span');
+        spinner.className = 'loading loading-spinner loading-sm';
+        loadingCell.appendChild(spinner);
+        loadingRow.appendChild(loadingCell);
+        filesBody.appendChild(loadingRow);
+
+        try {
+            const response = await window.decypharrUtils.fetcher(`/api/v2/torrents/files?hash=${hash}`);
+            const files = await response.json();
+
+            filesBody.replaceChildren();
+
+            if (!files || files.length === 0) {
+                const emptyRow = document.createElement('tr');
+                const emptyCell = document.createElement('td');
+                emptyCell.colSpan = 3;
+                emptyCell.className = 'text-center opacity-50';
+                emptyCell.textContent = 'No files';
+                emptyRow.appendChild(emptyCell);
+                filesBody.appendChild(emptyRow);
+                return;
+            }
+
+            files.forEach(f => {
+                const row = document.createElement('tr');
+
+                const nameCell = document.createElement('td');
+                nameCell.className = 'truncate max-w-[300px]';
+                nameCell.title = f.name;
+                nameCell.textContent = f.name;
+                row.appendChild(nameCell);
+
+                const sizeCell = document.createElement('td');
+                sizeCell.className = 'text-right';
+                sizeCell.textContent = window.decypharrUtils.formatBytes(f.size);
+                row.appendChild(sizeCell);
+
+                const progressCell = document.createElement('td');
+                progressCell.className = 'text-right';
+                progressCell.textContent = `${(f.progress * 100).toFixed(0)}%`;
+                row.appendChild(progressCell);
+
+                filesBody.appendChild(row);
+            });
+        } catch (error) {
+            filesBody.replaceChildren();
+            const errorRow = document.createElement('tr');
+            const errorCell = document.createElement('td');
+            errorCell.colSpan = 3;
+            errorCell.className = 'text-center text-error';
+            errorCell.textContent = 'Failed to load files';
+            errorRow.appendChild(errorCell);
+            filesBody.appendChild(errorRow);
+        }
+    }
+
+    getStateBadgeClass(state) {
+        switch (state?.toLowerCase()) {
+            case 'downloading': return 'badge-info';
+            case 'pausedup':
+            case 'completed': return 'badge-success';
+            case 'error': return 'badge-error';
+            default: return 'badge-ghost';
+        }
+    }
+
+    copyMagnetFromModal() {
+        const torrent = this.state.torrents.find(t => t.hash === this.state.selectedTorrentHash);
+        if (torrent) {
+            const magnetUri = torrent.magnet_uri || `magnet:?xt=urn:btih:${torrent.hash}`;
+            navigator.clipboard.writeText(magnetUri);
+            window.decypharrUtils.createToast('Magnet copied to clipboard', 'success');
+        }
+    }
+
+    async deleteFromModal() {
+        const torrent = this.state.torrents.find(t => t.hash === this.state.selectedTorrentHash);
+        if (!torrent) return;
+
+        if (!confirm(`Delete "${torrent.name}"?`)) return;
+
+        try {
+            const endpoint = `/api/torrents/${encodeURIComponent(torrent.category || '')}/${torrent.hash}`;
+            const response = await window.decypharrUtils.fetcher(endpoint, { method: 'DELETE' });
+
+            if (!response.ok) throw new Error(await response.text());
+
+            document.getElementById('torrentDetailsModal').close();
+            window.decypharrUtils.createToast('Torrent deleted', 'success');
+            this.loadTorrents();
+        } catch (error) {
+            window.decypharrUtils.createToast('Delete failed: ' + error.message, 'error');
+        }
+    }
 }
+
+// Export to window for global access
+window.torrentDashboard = null;

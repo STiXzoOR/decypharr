@@ -30,6 +30,11 @@
                 </div>
 
                 <div class="flex flex-wrap items-center gap-2 w-full lg:w-auto">
+                    <div class="form-control">
+                        <input type="text" id="searchInput" placeholder="Search torrents..."
+                               class="input input-bordered input-sm w-full sm:w-64"
+                               oninput="window.torrentDashboard.handleSearch(this.value)">
+                    </div>
                     <select class="select select-bordered select-sm w-full sm:w-auto min-w-32" id="stateFilter">
                         <option value="">All States</option>
                         <option value="pausedUP">Completed</option>
@@ -137,9 +142,124 @@
     </a></li>
 </ul>
 
+<!-- Torrent Details Modal -->
+<dialog id="torrentDetailsModal" class="modal">
+    <div class="modal-box max-w-4xl max-h-[90vh]">
+        <form method="dialog">
+            <button class="btn btn-sm btn-circle btn-ghost absolute right-2 top-2">X</button>
+        </form>
+
+        <h3 class="font-bold text-xl mb-6 pr-8" id="modalTorrentName">-</h3>
+
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-6">
+            <!-- Torrent Info Card -->
+            <div class="card bg-base-200">
+                <div class="card-body p-4">
+                    <h4 class="card-title text-sm mb-3">
+                        <i class="bi bi-info-circle text-primary mr-2"></i>Torrent Info
+                    </h4>
+                    <div class="space-y-2 text-sm">
+                        <div class="flex justify-between">
+                            <span class="opacity-70">Hash:</span>
+                            <span class="font-mono text-xs truncate max-w-[200px]" id="modalHash">-</span>
+                        </div>
+                        <div class="flex justify-between">
+                            <span class="opacity-70">Size:</span>
+                            <span id="modalSize">-</span>
+                        </div>
+                        <div class="flex justify-between">
+                            <span class="opacity-70">Progress:</span>
+                            <span id="modalProgress">-</span>
+                        </div>
+                        <div class="flex justify-between">
+                            <span class="opacity-70">Speed:</span>
+                            <span id="modalSpeed">-</span>
+                        </div>
+                        <div class="flex justify-between">
+                            <span class="opacity-70">Added:</span>
+                            <span id="modalAddedOn">-</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Stats Card -->
+            <div class="card bg-base-200">
+                <div class="card-body p-4">
+                    <h4 class="card-title text-sm mb-3">
+                        <i class="bi bi-bar-chart text-info mr-2"></i>Statistics
+                    </h4>
+                    <div class="space-y-2 text-sm">
+                        <div class="flex justify-between">
+                            <span class="opacity-70">Category:</span>
+                            <span class="badge badge-secondary badge-sm" id="modalCategory">-</span>
+                        </div>
+                        <div class="flex justify-between">
+                            <span class="opacity-70">Debrid:</span>
+                            <span class="badge badge-accent badge-sm" id="modalDebrid">-</span>
+                        </div>
+                        <div class="flex justify-between">
+                            <span class="opacity-70">State:</span>
+                            <span class="badge badge-sm" id="modalState">-</span>
+                        </div>
+                        <div class="flex justify-between">
+                            <span class="opacity-70">Seeders:</span>
+                            <span id="modalSeeders">-</span>
+                        </div>
+                        <div class="flex justify-between">
+                            <span class="opacity-70">Downloaded:</span>
+                            <span id="modalDownloaded">-</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Files Section -->
+        <div class="card bg-base-200">
+            <div class="card-body p-4">
+                <h4 class="card-title text-sm mb-3">
+                    <i class="bi bi-files text-success mr-2"></i>Files
+                </h4>
+                <div class="overflow-x-auto max-h-48">
+                    <table class="table table-xs">
+                        <thead>
+                            <tr>
+                                <th>Name</th>
+                                <th class="text-right">Size</th>
+                                <th class="text-right">Progress</th>
+                            </tr>
+                        </thead>
+                        <tbody id="modalFilesBody">
+                            <tr><td colspan="3" class="text-center opacity-50">Loading files...</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <!-- Actions -->
+        <div class="modal-action">
+            <button class="btn btn-sm btn-outline" onclick="window.torrentDashboard.copyMagnetFromModal()">
+                <i class="bi bi-magnet mr-1"></i>Copy Magnet
+            </button>
+            <button class="btn btn-sm btn-error" onclick="window.torrentDashboard.deleteFromModal()">
+                <i class="bi bi-trash mr-1"></i>Delete
+            </button>
+            <form method="dialog">
+                <button class="btn btn-sm">Close</button>
+            </form>
+        </div>
+    </div>
+    <form method="dialog" class="modal-backdrop">
+        <button>close</button>
+    </form>
+</dialog>
+
 <script>
     document.addEventListener('DOMContentLoaded', () => {
-        window.dashboard = new TorrentDashboard();
+        window.torrentDashboard = new TorrentDashboard();
+        window.dashboard = window.torrentDashboard;
     });
 </script>
 {{ end }}
