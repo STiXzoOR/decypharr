@@ -34,6 +34,7 @@ type AllDebrid struct {
 	logger          zerolog.Logger
 	checkCached     bool
 	addSamples      bool
+	UnpackRar       bool
 	minimumFreeSlot int
 }
 
@@ -66,6 +67,7 @@ func New(dc config.Debrid, ratelimits map[string]ratelimit.Limiter) (*AllDebrid,
 		logger:                logger.New(dc.Name),
 		checkCached:           dc.CheckCached,
 		addSamples:            dc.AddSamples,
+		UnpackRar:             dc.UnpackRar,
 		minimumFreeSlot:       dc.MinimumFreeSlot,
 	}, nil
 }

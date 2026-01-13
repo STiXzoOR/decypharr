@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"net/http"
+	"strings"
 	"time"
 
 	"github.com/rs/zerolog"
@@ -14,9 +16,6 @@ import (
 	"github.com/sirrobot01/decypharr/pkg/debrid/account"
 	"github.com/sirrobot01/decypharr/pkg/debrid/types"
 	"go.uber.org/ratelimit"
-
-	"net/http"
-	"strings"
 )
 
 type DebridLink struct {
@@ -33,6 +32,7 @@ type DebridLink struct {
 	logger      zerolog.Logger
 	checkCached bool
 	addSamples  bool
+	UnpackRar   bool
 
 	Profile *types.Profile `json:"profile,omitempty"`
 }
@@ -66,6 +66,7 @@ func New(dc config.Debrid, ratelimits map[string]ratelimit.Limiter) (*DebridLink
 		logger:                logger.New(dc.Name),
 		checkCached:           dc.CheckCached,
 		addSamples:            dc.AddSamples,
+		UnpackRar:             dc.UnpackRar,
 	}, nil
 }
 
@@ -164,6 +165,12 @@ func (dl *DebridLink) GetTorrent(torrentId string) (*types.Torrent, error) {
 	}
 	cfg := config.Get()
 	for _, f := range t.Files {
+		if !dl.addSamples && utils.IsSampleFile(f.Name) {
+			continue
+		}
+		if !cfg.IsAllowedFile(f.Name) {
+			continue
+		}
 		if !cfg.IsSizeAllowed(f.Size) {
 			continue
 		}
@@ -224,6 +231,12 @@ func (dl *DebridLink) UpdateTorrent(t *types.Torrent) error {
 	cfg := config.Get()
 	now := time.Now()
 	for _, f := range data.Files {
+		if !dl.addSamples && utils.IsSampleFile(f.Name) {
+			continue
+		}
+		if !cfg.IsAllowedFile(f.Name) {
+			continue
+		}
 		if !cfg.IsSizeAllowed(f.Size) {
 			continue
 		}
@@ -284,8 +297,18 @@ func (dl *DebridLink) SubmitMagnet(t *types.Torrent) (*types.Torrent, error) {
 	t.MountPath = dl.MountPath
 	t.Debrid = dl.name
 	t.Added = time.Unix(data.Created, 0).Format(time.RFC3339)
+	cfg := config.Get()
 	now := time.Now()
 	for _, f := range data.Files {
+		if !dl.addSamples && utils.IsSampleFile(f.Name) {
+			continue
+		}
+		if !cfg.IsAllowedFile(f.Name) {
+			continue
+		}
+		if !cfg.IsSizeAllowed(f.Size) {
+			continue
+		}
 		file := types.File{
 			TorrentId: t.Id,
 			Id:        f.ID,
@@ -424,6 +447,12 @@ func (dl *DebridLink) getTorrents(page, perPage int) ([]*types.Torrent, error) {
 		cfg := config.Get()
 		now := time.Now()
 		for _, f := range t.Files {
+			if !dl.addSamples && utils.IsSampleFile(f.Name) {
+				continue
+			}
+			if !cfg.IsAllowedFile(f.Name) {
+				continue
+			}
 			if !cfg.IsSizeAllowed(f.Size) {
 				continue
 			}
