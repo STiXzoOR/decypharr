@@ -188,6 +188,26 @@ func (s *Storage) AddOrUpdate(arr *Arr) {
 	if request.ValidateURL(arr.Host) != nil {
 		return
 	}
+
+	// Check if this arr already exists
+	existing, exists := s.Arrs[arr.Name]
+	if exists {
+		// Never overwrite a config-sourced Arr with an auto-detected one
+		// Config-sourced Arrs have Source != "auto" (either empty, "config", or user-set)
+		isExistingFromConfig := existing.Source != "auto"
+		isNewAutoDetected := arr.Source == "auto"
+
+		if isExistingFromConfig && isNewAutoDetected {
+			// Don't overwrite user-configured Arr with auto-detected data
+			// Only update the host and token if they are provided (for auth purposes)
+			// but preserve other user settings
+			existing.Host = arr.Host
+			existing.Token = arr.Token
+			s.Arrs[arr.Name] = existing
+			return
+		}
+	}
+
 	s.Arrs[arr.Name] = arr
 }
 
@@ -202,6 +222,17 @@ func (s *Storage) GetAll() []*Arr {
 	defer s.mu.Unlock()
 	arrs := make([]*Arr, 0, len(s.Arrs))
 	for _, arr := range s.Arrs {
+		// Filter out invalid auto-detected entries that have empty or invalid host/token
+		if arr.Source == "auto" {
+			// Skip auto-detected entries with invalid configuration
+			if arr.Host == "" || arr.Token == "" {
+				continue
+			}
+			// Validate the host URL for auto-detected entries
+			if request.ValidateURL(arr.Host) != nil {
+				continue
+			}
+		}
 		arrs = append(arrs, arr)
 	}
 	return arrs

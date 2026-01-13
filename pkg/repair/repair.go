@@ -42,9 +42,10 @@ type Repair struct {
 	workers     int
 	scheduler   gocron.Scheduler
 
-	debridPathCache sync.Map // debridPath:debridName cache.Emptied after each run
-	torrentsMap     sync.Map //debridName: map[string]*store.CacheTorrent. Emptied after each run
-	ctx             context.Context
+	debridPathCache  sync.Map // debridPath:debridName cache.Emptied after each run
+	torrentsMap      sync.Map //debridName: map[string]*store.CacheTorrent. Emptied after each run
+	mountCheckCache  sync.Map // folder path -> bool (accessible). Emptied after each run
+	ctx              context.Context
 }
 
 type JobStatus string
@@ -228,8 +229,9 @@ func (r *Repair) initRun(ctx context.Context) {
 // // onComplete is called when the repair job is completed
 func (r *Repair) onComplete() {
 	// Set the cache maps to nil
-	r.torrentsMap = sync.Map{} // Clear the torrent map
-	r.debridPathCache = sync.Map{}
+	r.torrentsMap = sync.Map{}       // Clear the torrent map
+	r.debridPathCache = sync.Map{}   // Clear debrid path cache
+	r.mountCheckCache = sync.Map{}   // Clear mount check cache
 }
 
 func (r *Repair) preRunChecks() error {
@@ -518,35 +520,77 @@ func (r *Repair) repairArr(job *Job, _arr string, tmdbId string) ([]arr.ContentF
 	return brokenItems, nil
 }
 
-// checkMountUp checks if the mounts are accessible
+// checkMountUp checks if the mounts are accessible at the folder level
+// This validates that the mount points needed for the media files are accessible
 func (r *Repair) checkMountUp(media []arr.Content) error {
-	firstMedia := media[0]
+	// Collect unique mount folders from all media files
+	mountFolders := make(map[string]bool)
+
 	for _, m := range media {
-		if len(m.Files) > 0 {
-			firstMedia = m
-			break
-		}
-	}
-	files := firstMedia.Files
-	if len(files) == 0 {
-		return fmt.Errorf("no files found in media %s", firstMedia.Title)
-	}
-	for _, file := range files {
-		if _, err := os.Stat(file.Path); os.IsNotExist(err) {
-			// If the file does not exist, we can't check the symlink target
-			r.logger.Debug().Msgf("File %s does not exist, skipping repair", file.Path)
-			return fmt.Errorf("file %s does not exist, skipping repair", file.Path)
-		}
-		// Get the symlink target
-		symlinkPath := getSymlinkTarget(file.Path)
-		if symlinkPath != "" {
-			r.logger.Trace().Msgf("Found symlink target for %s: %s", file.Path, symlinkPath)
-			if _, err := os.Stat(symlinkPath); os.IsNotExist(err) {
-				r.logger.Debug().Msgf("Symlink target %s does not exist, skipping repair", symlinkPath)
-				return fmt.Errorf("symlink target %s does not exist for %s. skipping repair", symlinkPath, file.Path)
+		for _, file := range m.Files {
+			// Get the symlink target to find the actual mount path
+			symlinkPath := getSymlinkTarget(file.Path)
+			if symlinkPath != "" {
+				// Get the mount folder (parent directory of the torrent folder)
+				// For paths like /mnt/debrid/realdebrid/torrent-name/file.mkv
+				// we want to check /mnt/debrid/realdebrid/
+				torrentDir := filepath.Dir(symlinkPath)
+				mountDir := filepath.Dir(torrentDir)
+				if mountDir != "" && mountDir != "." && mountDir != "/" {
+					mountFolders[mountDir] = true
+				}
 			}
 		}
 	}
+
+	if len(mountFolders) == 0 {
+		// No symlinks found, check if we have any files at all
+		for _, m := range media {
+			if len(m.Files) > 0 {
+				// Files exist but no symlinks - might be direct files, allow repair
+				return nil
+			}
+		}
+		return fmt.Errorf("no files found in media")
+	}
+
+	// Check each unique mount folder (with caching)
+	for mountDir := range mountFolders {
+		// Check cache first
+		if accessible, ok := r.mountCheckCache.Load(mountDir); ok {
+			if !accessible.(bool) {
+				return fmt.Errorf("mount %s is not accessible (cached)", mountDir)
+			}
+			continue
+		}
+
+		// Check if mount folder is accessible
+		info, err := os.Stat(mountDir)
+		if err != nil {
+			r.mountCheckCache.Store(mountDir, false)
+			r.logger.Debug().Err(err).Msgf("Mount folder %s is not accessible", mountDir)
+			return fmt.Errorf("mount folder %s is not accessible: %w", mountDir, err)
+		}
+
+		// Verify it's a directory
+		if !info.IsDir() {
+			r.mountCheckCache.Store(mountDir, false)
+			return fmt.Errorf("mount path %s is not a directory", mountDir)
+		}
+
+		// Try to list the directory to verify it's actually accessible (not stale mount)
+		_, err = os.ReadDir(mountDir)
+		if err != nil {
+			r.mountCheckCache.Store(mountDir, false)
+			r.logger.Debug().Err(err).Msgf("Mount folder %s is not readable", mountDir)
+			return fmt.Errorf("mount folder %s is not readable: %w", mountDir, err)
+		}
+
+		// Mount is accessible, cache the result
+		r.mountCheckCache.Store(mountDir, true)
+		r.logger.Trace().Msgf("Mount folder %s is accessible", mountDir)
+	}
+
 	return nil
 }
 
@@ -591,6 +635,20 @@ func (r *Repair) getZurgBrokenFiles(job *Job, media arr.Content) []arr.ContentFi
 	// This reduces bandwidth usage significantly
 
 	brokenFiles := make([]arr.ContentFile, 0)
+
+	// First pass: check local readability for ALL files to detect I/O errors
+	// before making any remote API calls
+	for i := 0; i < len(media.Files); i++ {
+		file := media.Files[i]
+		if err := fileIsReadable(file.Path); err != nil {
+			r.logger.Debug().Err(err).Msgf("File %s is not readable (I/O error)", file.Path)
+			brokenFiles = append(brokenFiles, file)
+			// Remove from media.Files to avoid remote check
+			media.Files = append(media.Files[:i], media.Files[i+1:]...)
+			i-- // Adjust index after removal
+		}
+	}
+
 	uniqueParents := collectFiles(media)
 	tr := &http.Transport{
 		TLSHandshakeTimeout: 60 * time.Second,
@@ -670,6 +728,20 @@ func (r *Repair) getWebdavBrokenFiles(job *Job, media arr.Content) []arr.Content
 	}
 
 	brokenFiles := make([]arr.ContentFile, 0)
+
+	// First pass: check local readability for ALL files to detect I/O errors
+	// before making any remote API calls
+	for i := 0; i < len(media.Files); i++ {
+		file := media.Files[i]
+		if err := fileIsReadable(file.Path); err != nil {
+			r.logger.Debug().Err(err).Msgf("File %s is not readable (I/O error)", file.Path)
+			brokenFiles = append(brokenFiles, file)
+			// Remove from media.Files to avoid remote check
+			media.Files = append(media.Files[:i], media.Files[i+1:]...)
+			i-- // Adjust index after removal
+		}
+	}
+
 	uniqueParents := collectFiles(media)
 	for torrentPath, files := range uniqueParents {
 		select {
