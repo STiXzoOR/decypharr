@@ -70,21 +70,28 @@
             </div>
         </div>
 
+        <!-- Enhanced Rclone Status Card -->
         <div class="card bg-base-100 shadow-xl" id="rclone-card">
-            <div class="card-header p-6 pb-3">
-                <div class="card-title text-xl justify-between items-center">
-                    <h2>
-                        <i class="bi bi-cloud-arrow-up text-primary"></i>
-                        Rclone Statistics
+            <div class="card-body p-6">
+                <div class="flex justify-between items-center mb-4">
+                    <h2 class="card-title text-xl">
+                        <i class="bi bi-cloud-arrow-up-fill text-primary"></i>
+                        Rclone Status
                     </h2>
-                    <a href="{{.URLBase}}debug/logs/rclone" class="btn btn-sm btn-outline" target="_blank">
-                        <i class="bi bi-arrow-right"></i>
-                        View Rclone Logs
-                    </a>
+                    <div class="flex items-center gap-3">
+                        <span class="badge" id="rclone-status">Loading...</span>
+                        <a href="{{.URLBase}}debug/logs/rclone" class="btn btn-sm btn-outline btn-primary" target="_blank">
+                            <i class="bi bi-file-text"></i>
+                            Logs
+                        </a>
+                    </div>
                 </div>
-                <div class="badge" id="rclone-status">Unknown</div>
-            </div>
-            <div class="card-body p-6 pt-3" id="rclone-content">
+
+                <div id="rclone-content">
+                    <div class="flex justify-center py-8">
+                        <span class="loading loading-spinner loading-lg"></span>
+                    </div>
+                </div>
             </div>
         </div>
     </div>
@@ -131,181 +138,233 @@
         }
 
         function updateRcloneStats(rclone) {
-            const rcloneCard = document.getElementById('rclone-card');
-            const rcloneStatus = document.getElementById('rclone-status');
-            const rcloneContent = document.getElementById('rclone-content');
+            const statusEl = document.getElementById('rclone-status');
+            const contentEl = document.getElementById('rclone-content');
 
             if (!rclone || !rclone.enabled) {
-                rcloneStatus.textContent = 'Disabled';
-                rcloneStatus.className = 'badge badge-error';
-                rcloneContent.innerHTML = '<p class="text-base-content/70">Rclone is not enabled or configured.</p>';
+                statusEl.textContent = 'Disabled';
+                statusEl.className = 'badge badge-ghost';
+                contentEl.innerHTML = '<p class="text-center opacity-50 py-4">Rclone is not enabled</p>';
                 return;
             }
 
             if (!rclone.server_ready) {
-                rcloneStatus.textContent = 'Not Ready';
-                rcloneStatus.className = 'badge badge-warning';
-                rcloneContent.innerHTML = '<p class="text-base-content/70">Rclone server is not ready.</p>';
+                statusEl.textContent = 'Not Ready';
+                statusEl.className = 'badge badge-warning';
+                contentEl.innerHTML = '<p class="text-center opacity-50 py-4">Rclone server not ready</p>';
                 return;
             }
 
-            rcloneStatus.textContent = 'Active';
-            rcloneStatus.className = 'badge badge-success';
+            // Determine status based on active transfers and errors
+            const hasActiveTransfers = rclone.core && rclone.core.transferring && rclone.core.transferring.length > 0;
+            const hasErrors = rclone.core && (rclone.core.errors || 0) > 0;
 
-            let html = '<div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">';
-
-            // Version info
-            if (rclone.version) {
-                html += `
-                    <div class="stat">
-                        <div class="stat-title">Rclone Version</div>
-                        <div class="stat-value text-sm">${rclone.version.version || 'Unknown'}</div>
-                        <div class="stat-desc">${rclone.version.arch || ''} ${rclone.version.os || ''}</div>
-                    </div>
-                `;
+            if (hasErrors) {
+                statusEl.textContent = 'Error';
+                statusEl.className = 'badge badge-error';
+            } else if (hasActiveTransfers) {
+                statusEl.textContent = 'Transferring';
+                statusEl.className = 'badge badge-info';
+            } else {
+                statusEl.textContent = 'Active';
+                statusEl.className = 'badge badge-success';
             }
 
-            // Core stats contain transfer information
+            let html = '';
+
+            // Version Info Card
+            if (rclone.version) {
+                html += `
+                    <div class="stats stats-vertical lg:stats-horizontal shadow mb-4 w-full bg-base-200">
+                        <div class="stat">
+                            <div class="stat-figure text-primary">
+                                <i class="bi bi-gear text-2xl"></i>
+                            </div>
+                            <div class="stat-title">Version</div>
+                            <div class="stat-value text-lg">${rclone.version.version || '-'}</div>
+                            <div class="stat-desc">${rclone.version.os || ''} / ${rclone.version.arch || ''}</div>
+                        </div>
+                `;
+
+                // Add uptime to version stats if available
+                if (rclone.core) {
+                    html += `
+                        <div class="stat">
+                            <div class="stat-figure text-accent">
+                                <i class="bi bi-clock-history text-2xl"></i>
+                            </div>
+                            <div class="stat-title">Uptime</div>
+                            <div class="stat-value text-lg">${window.decypharrUtils.formatDuration(rclone.core.elapsedTime)}</div>
+                            <div class="stat-desc">Transfer time: ${window.decypharrUtils.formatDuration(rclone.core.transferTime)}</div>
+                        </div>
+                    `;
+                }
+
+                html += '</div>';
+            }
+
+            // Transfer Stats Grid
             if (rclone.core) {
                 const cs = rclone.core;
                 html += `
-                    <div class="stat">
-                        <div class="stat-title">Transferred</div>
-                        <div class="stat-value text-primary">${window.decypharrUtils.formatBytes(cs.bytes || 0)}</div>
-                        <div class="stat-desc">Speed: ${window.decypharrUtils.formatBytes(cs.speed || 0)}/s</div>
+                    <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
+                        <div class="stat bg-base-200 rounded-lg p-3">
+                            <div class="stat-title text-xs">Transferred</div>
+                            <div class="stat-value text-lg text-primary">${window.decypharrUtils.formatBytes(cs.bytes || 0)}</div>
+                        </div>
+                        <div class="stat bg-base-200 rounded-lg p-3">
+                            <div class="stat-title text-xs">Speed</div>
+                            <div class="stat-value text-lg text-info">${window.decypharrUtils.formatBytes(cs.speed || 0)}/s</div>
+                        </div>
+                        <div class="stat bg-base-200 rounded-lg p-3">
+                            <div class="stat-title text-xs">Transfers</div>
+                            <div class="stat-value text-lg">${cs.transfers || 0}</div>
+                        </div>
+                        <div class="stat bg-base-200 rounded-lg p-3">
+                            <div class="stat-title text-xs">Errors</div>
+                            <div class="stat-value text-lg ${(cs.errors || 0) > 0 ? 'text-error' : ''}">${cs.errors || 0}</div>
+                        </div>
                     </div>
-                    <div class="stat">
-                        <div class="stat-title">Transfers</div>
-                        <div class="stat-value text-info">${cs.transfers || 0}</div>
-                        <div class="stat-desc">Errors: ${cs.errors || 0}</div>
-                    </div>
-                    <div class="stat">
-                        <div class="stat-title">Checks</div>
-                        <div class="stat-value text-secondary">${cs.checks || 0}</div>
-                        <div class="stat-desc">Total: ${cs.totalChecks || 0}</div>
-                    </div>
-                    <div class="stat">
-                        <div class="stat-title">Uptime</div>
-                        <div class="stat-value text-accent">${window.decypharrUtils.formatDuration(cs.elapsedTime)}</div>
-                        <div class="stat-desc">Transfer: ${window.decypharrUtils.formatDuration(cs.transferTime)}</div>
+                    <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
+                        <div class="stat bg-base-200 rounded-lg p-3">
+                            <div class="stat-title text-xs">Checks</div>
+                            <div class="stat-value text-lg text-secondary">${cs.checks || 0}</div>
+                        </div>
+                        <div class="stat bg-base-200 rounded-lg p-3">
+                            <div class="stat-title text-xs">Total Checks</div>
+                            <div class="stat-value text-lg">${cs.totalChecks || 0}</div>
+                        </div>
+                        <div class="stat bg-base-200 rounded-lg p-3">
+                            <div class="stat-title text-xs">Total Transfers</div>
+                            <div class="stat-value text-lg">${cs.totalTransfers || 0}</div>
+                        </div>
+                        <div class="stat bg-base-200 rounded-lg p-3">
+                            <div class="stat-title text-xs">Deletes</div>
+                            <div class="stat-value text-lg">${cs.deletes || 0}</div>
+                        </div>
                     </div>
                 `;
-            }
 
-            if (rclone.memory) {
-                const ms = rclone.memory;
-                html += `
-                    <div class="stat">
-                        <div class="stat-title">Rclone Memory</div>
-                        <div class="stat-value text-accent">${window.decypharrUtils.formatBytes(ms.Sys || 0)}</div>
-                        <div class="stat-desc">Heap: ${window.decypharrUtils.formatBytes(ms.TotalAlloc || 0)}</div>
-                    </div>
-                `;
-            }
-            html += '</div>';
-
-            // Add active transfers if available
-            if (rclone.core && rclone.core.transferring && rclone.core.transferring.length > 0) {
-                let transferring = rclone.core.transferring;
-                html += `
-                    <div class="mt-6">
-                        <h3 class="text-lg font-semibold mb-3">
-                            <i class="bi bi-arrow-down-up text-primary"></i>
-                            Active Transfers (${transferring.length})
-                        </h3>
-                        <div class="space-y-2 max-h-64 overflow-y-auto">
-                `;
-
-                transferring.forEach(transfer => {
-                    const progress = ((transfer.bytes || 0) / (transfer.size || 1)) * 100;
+                // Active Transfers List
+                if (cs.transferring && cs.transferring.length > 0) {
                     html += `
-                        <div class="card bg-base-200 compact">
-                            <div class="card-body">
-                                <div class="flex justify-between items-start mb-2">
-                                    <h4 class="font-medium text-sm truncate flex-1 mr-2">${transfer.name || 'Unknown'}</h4>
-                                    <span class="text-xs text-base-content/70">${window.decypharrUtils.formatBytes(transfer.speed || 0)}/s</span>
+                        <div class="mb-4">
+                            <h3 class="font-semibold mb-2 flex items-center gap-2">
+                                <i class="bi bi-arrow-down-up text-primary"></i>
+                                Active Transfers (${cs.transferring.length})
+                            </h3>
+                            <div class="space-y-2 max-h-48 overflow-y-auto">
+                    `;
+
+                    cs.transferring.forEach(t => {
+                        const progress = t.size > 0 ? ((t.bytes || 0) / t.size * 100) : 0;
+                        const eta = t.eta ? window.decypharrUtils.formatDuration(t.eta) : '-';
+                        html += `
+                            <div class="bg-base-200 rounded-lg p-3">
+                                <div class="flex justify-between items-center mb-1">
+                                    <span class="text-sm font-medium truncate max-w-[70%]" title="${t.name}">${t.name}</span>
+                                    <span class="text-xs opacity-70">${window.decypharrUtils.formatBytes(t.speed || 0)}/s</span>
                                 </div>
-                                <div class="flex items-center space-x-2">
-                                    <progress class="progress progress-primary flex-1" value="${progress}" max="100"></progress>
-                                    <span class="text-xs font-mono">${progress.toFixed(1)}%</span>
-                                </div>
-                                <div class="flex justify-between text-xs text-base-content/60 mt-1">
-                                    <span>${window.decypharrUtils.formatBytes(transfer.bytes || 0)} / ${window.decypharrUtils.formatBytes(transfer.size || 0)}</span>
-                                    <span>ETA: ${transfer.eta ? window.decypharrUtils.formatDuration(transfer.eta) : 'Unknown'}</span>
+                                <progress class="progress progress-primary w-full h-2" value="${progress}" max="100"></progress>
+                                <div class="flex justify-between text-xs opacity-70 mt-1">
+                                    <span>${window.decypharrUtils.formatBytes(t.bytes || 0)} / ${window.decypharrUtils.formatBytes(t.size || 0)}</span>
+                                    <span>ETA: ${eta}</span>
                                 </div>
                             </div>
-                        </div>
-                    `;
-                });
+                        `;
+                    });
 
-                html += '</div></div>';
+                    html += '</div></div>';
+                }
             }
 
-            // Add mount information if available
+            // Mounted Services Grid
             if (rclone.mounts && Object.keys(rclone.mounts).length > 0) {
                 html += `
-                    <div class="mt-6">
-                        <h3 class="text-lg font-semibold mb-3">
-                            <i class="bi bi-hdd-stack text-primary"></i>
-                            Mounted Services
+                    <div class="mb-4">
+                        <h3 class="font-semibold mb-2 flex items-center gap-2">
+                            <i class="bi bi-hdd-network text-success"></i>
+                            Mounted Services (${Object.keys(rclone.mounts).length})
                         </h3>
-                        <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+                        <div class="grid grid-cols-1 md:grid-cols-2 gap-2">
                 `;
-                
+
                 Object.entries(rclone.mounts).forEach(([name, mount]) => {
-                    const statusBadge = mount.mounted ? 
-                        '<span class="badge badge-success badge-sm">Mounted</span>' : 
-                        '<span class="badge badge-error badge-sm">Not Mounted</span>';
-                    
+                    const statusBadge = mount.mounted
+                        ? '<span class="badge badge-success badge-xs">Mounted</span>'
+                        : '<span class="badge badge-error badge-xs">Not Mounted</span>';
                     html += `
-                        <div class="card bg-base-200 compact">
-                            <div class="card-body">
-                                <div class="flex justify-between items-center">
-                                    <div>
-                                        <h4 class="font-medium">${mount.config_name || name}</h4>
-                                        <p class="text-xs text-base-content/70">${mount.provider || 'Unknown Provider'}</p>
-                                        ${mount.local_path ? `<p class="text-xs text-base-content/60 font-mono">${mount.local_path}</p>` : ''}
-                                    </div>
-                                    <div class="text-right">
-                                        ${statusBadge}
-                                        ${mount.mounted_at ? `<p class="text-xs text-base-content/60">Since: ${new Date(mount.mounted_at).toLocaleTimeString()}</p>` : ''}
-                                    </div>
+                        <div class="bg-base-200 rounded-lg p-3">
+                            <div class="flex justify-between items-center">
+                                <div>
+                                    <span class="font-medium">${mount.config_name || name}</span>
+                                    <span class="text-xs opacity-70 ml-2">${mount.provider || ''}</span>
                                 </div>
-                                ${mount.error ? `<div class="alert alert-error alert-sm mt-2"><span class="text-xs">${mount.error}</span></div>` : ''}
+                                ${statusBadge}
                             </div>
+                            <div class="text-xs opacity-70 mt-1 font-mono">${mount.local_path || '-'}</div>
+                            ${mount.mounted_at ? `<div class="text-xs opacity-50 mt-1">Since: ${new Date(mount.mounted_at).toLocaleString()}</div>` : ''}
+                            ${mount.error ? `<div class="text-xs text-error mt-1">${mount.error}</div>` : ''}
                         </div>
                     `;
                 });
-                
+
                 html += '</div></div>';
             }
 
-            // Add bandwidth stats if available
+            // Memory Stats
+            if (rclone.memory) {
+                html += `
+                    <div class="mb-4">
+                        <h3 class="font-semibold mb-2 flex items-center gap-2">
+                            <i class="bi bi-memory text-warning"></i>
+                            Memory Usage
+                        </h3>
+                        <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+                            <div class="stat bg-base-200 rounded-lg p-3">
+                                <div class="stat-title text-xs">System Memory</div>
+                                <div class="stat-value text-sm">${window.decypharrUtils.formatBytes(rclone.memory.Sys || 0)}</div>
+                            </div>
+                            <div class="stat bg-base-200 rounded-lg p-3">
+                                <div class="stat-title text-xs">Heap Alloc</div>
+                                <div class="stat-value text-sm">${window.decypharrUtils.formatBytes(rclone.memory.HeapAlloc || 0)}</div>
+                            </div>
+                            <div class="stat bg-base-200 rounded-lg p-3">
+                                <div class="stat-title text-xs">Total Alloc</div>
+                                <div class="stat-value text-sm">${window.decypharrUtils.formatBytes(rclone.memory.TotalAlloc || 0)}</div>
+                            </div>
+                            <div class="stat bg-base-200 rounded-lg p-3">
+                                <div class="stat-title text-xs">Heap Objects</div>
+                                <div class="stat-value text-sm">${(rclone.memory.HeapObjects || 0).toLocaleString()}</div>
+                            </div>
+                        </div>
+                    </div>
+                `;
+            }
+
+            // Bandwidth Limits
             if (rclone.bandwidth && rclone.bandwidth.rate !== "off") {
                 html += `
-                    <div class="mt-6">
-                        <h3 class="text-lg font-semibold mb-3">
+                    <div class="mb-4">
+                        <h3 class="font-semibold mb-2 flex items-center gap-2">
                             <i class="bi bi-speedometer2 text-info"></i>
                             Bandwidth Limits
                         </h3>
-                        <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
-                `;
-
-                html += `
-                    <div class="stat bg-base-200 rounded-lg p-3">
-                        <div class="stat-title text-xs">Bytes Per Seconds</div>
-                        <div class="stat-value text-sm">${window.decypharrUtils.formatBytes(rclone.bandwidth.bytesPerSecond)}</div>
+                        <div class="grid grid-cols-2 gap-4">
+                            <div class="stat bg-base-200 rounded-lg p-3">
+                                <div class="stat-title text-xs">Bytes Per Second</div>
+                                <div class="stat-value text-sm">${window.decypharrUtils.formatBytes(rclone.bandwidth.bytesPerSecond || 0)}</div>
+                            </div>
+                            <div class="stat bg-base-200 rounded-lg p-3">
+                                <div class="stat-title text-xs">Rate Limit</div>
+                                <div class="stat-value text-sm">${rclone.bandwidth.rate || '-'}</div>
+                            </div>
+                        </div>
                     </div>
-                    <div class="stat bg-base-200 rounded-lg p-3">
-                        <div class="stat-title text-xs">Rate</div>
-                        <div class="stat-value text-sm">${window.decypharrUtils.formatBytes(rclone.bandwidth.rate)}</div>
-                    </div>
                 `;
-                
-                html += '</div></div>';
             }
 
-            rcloneContent.innerHTML = html;
+            contentEl.innerHTML = html || '<p class="text-center opacity-50 py-4">No rclone data available</p>';
         }
 
         function updateDebridStats(debrids) {
