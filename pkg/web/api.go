@@ -1,15 +1,13 @@
 package web
 
 import (
+	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
+	"os"
 	"strings"
 	"time"
-
-	"github.com/sirrobot01/decypharr/pkg/wire"
-	"golang.org/x/crypto/bcrypt"
-
-	"encoding/json"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/sirrobot01/decypharr/internal/config"
@@ -17,6 +15,8 @@ import (
 	"github.com/sirrobot01/decypharr/internal/utils"
 	"github.com/sirrobot01/decypharr/pkg/arr"
 	"github.com/sirrobot01/decypharr/pkg/version"
+	"github.com/sirrobot01/decypharr/pkg/wire"
+	"golang.org/x/crypto/bcrypt"
 )
 
 func (wb *Web) handleGetArrs(w http.ResponseWriter, r *http.Request) {
@@ -437,5 +437,156 @@ func (wb *Web) handleUpdateAuth(w http.ResponseWriter, r *http.Request) {
 
 	request.JSONResponse(w, map[string]string{
 		"message": "Authentication settings updated successfully",
+	}, http.StatusOK)
+}
+
+func (wb *Web) handleExportConfig(w http.ResponseWriter, r *http.Request) {
+	cfg := config.Get()
+
+	// Create export copy (sync arrs from storage)
+	arrStorage := wire.Get().Arr()
+	cfg.Arrs = arrStorage.SyncToConfig()
+
+	// Marshal to JSON
+	data, err := json.MarshalIndent(cfg, "", "  ")
+	if err != nil {
+		request.JSONResponse(w, map[string]string{"error": err.Error()}, http.StatusInternalServerError)
+		return
+	}
+
+	// Set download headers
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Content-Disposition", "attachment; filename=decypharr-config.json")
+	w.Write(data)
+}
+
+func (wb *Web) handleImportConfig(w http.ResponseWriter, r *http.Request) {
+	// Parse multipart form
+	err := r.ParseMultipartForm(10 << 20) // 10MB max
+	if err != nil {
+		request.JSONResponse(w, map[string]interface{}{
+			"success":  false,
+			"errors":   []string{"Failed to parse form: " + err.Error()},
+			"warnings": []string{},
+		}, http.StatusBadRequest)
+		return
+	}
+
+	file, _, err := r.FormFile("file")
+	if err != nil {
+		request.JSONResponse(w, map[string]interface{}{
+			"success":  false,
+			"errors":   []string{"No file provided"},
+			"warnings": []string{},
+		}, http.StatusBadRequest)
+		return
+	}
+	defer file.Close()
+
+	// Read file content
+	data, err := io.ReadAll(file)
+	if err != nil {
+		request.JSONResponse(w, map[string]interface{}{
+			"success":  false,
+			"errors":   []string{"Failed to read file: " + err.Error()},
+			"warnings": []string{},
+		}, http.StatusBadRequest)
+		return
+	}
+
+	// Parse JSON into config
+	var importedCfg config.Config
+	if err := json.Unmarshal(data, &importedCfg); err != nil {
+		request.JSONResponse(w, map[string]interface{}{
+			"success":  false,
+			"errors":   []string{"Invalid JSON: " + err.Error()},
+			"warnings": []string{},
+		}, http.StatusBadRequest)
+		return
+	}
+
+	// Validate config
+	warnings := []string{}
+	errors := []string{}
+
+	// Check required fields
+	if len(importedCfg.Debrids) == 0 {
+		errors = append(errors, "At least one debrid service is required")
+	}
+
+	for i, d := range importedCfg.Debrids {
+		if d.APIKey == "" {
+			errors = append(errors, fmt.Sprintf("Debrid %d: API key is required", i+1))
+		}
+		if d.Folder == "" {
+			errors = append(errors, fmt.Sprintf("Debrid %d: Folder is required", i+1))
+		}
+	}
+
+	if importedCfg.QBitTorrent.DownloadFolder == "" {
+		errors = append(errors, "QBittorrent download folder is required")
+	}
+
+	// Check if paths exist (warnings only)
+	if importedCfg.QBitTorrent.DownloadFolder != "" {
+		if _, err := os.Stat(importedCfg.QBitTorrent.DownloadFolder); os.IsNotExist(err) {
+			warnings = append(warnings, "Download folder does not exist: "+importedCfg.QBitTorrent.DownloadFolder)
+		}
+	}
+
+	// If errors, return without applying
+	if len(errors) > 0 {
+		request.JSONResponse(w, map[string]interface{}{
+			"success":  false,
+			"errors":   errors,
+			"warnings": warnings,
+		}, http.StatusBadRequest)
+		return
+	}
+
+	// Apply config
+	currentCfg := config.Get()
+
+	// Update fields (similar to handleUpdateConfig pattern)
+	currentCfg.LogLevel = importedCfg.LogLevel
+	currentCfg.Debrids = importedCfg.Debrids
+	currentCfg.QBitTorrent = importedCfg.QBitTorrent
+	currentCfg.Arrs = importedCfg.Arrs
+	currentCfg.Repair = importedCfg.Repair
+	currentCfg.Rclone = importedCfg.Rclone
+	currentCfg.MinFileSize = importedCfg.MinFileSize
+	currentCfg.MaxFileSize = importedCfg.MaxFileSize
+	currentCfg.AllowedExt = importedCfg.AllowedExt
+	currentCfg.DiscordWebhook = importedCfg.DiscordWebhook
+	currentCfg.CallbackURL = importedCfg.CallbackURL
+	currentCfg.RemoveStalledAfter = importedCfg.RemoveStalledAfter
+
+	// Sync arr storage with imported config
+	storage := wire.Get()
+	arrStorage := storage.Arr()
+	arrStorage.SyncFromConfig(currentCfg.Arrs)
+
+	// Save
+	if err := currentCfg.Save(); err != nil {
+		request.JSONResponse(w, map[string]interface{}{
+			"success":  false,
+			"errors":   []string{"Failed to save config: " + err.Error()},
+			"warnings": warnings,
+		}, http.StatusInternalServerError)
+		return
+	}
+
+	if restartFunc != nil {
+		go func() {
+			// Small delay to ensure the response is sent
+			time.Sleep(200 * time.Millisecond)
+			restartFunc()
+		}()
+	}
+
+	request.JSONResponse(w, map[string]interface{}{
+		"success":  true,
+		"warnings": warnings,
+		"message":  "Configuration imported successfully",
 	}, http.StatusOK)
 }

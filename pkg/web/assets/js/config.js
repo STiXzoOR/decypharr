@@ -1323,4 +1323,59 @@ class ConfigManager {
     }
 }
 
+async function exportConfig() {
+    try {
+        const response = await window.decypharrUtils.fetcher('/api/config/export');
+        if (!response.ok) throw new Error('Export failed');
+
+        const blob = await response.blob();
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = 'decypharr-config.json';
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        window.URL.revokeObjectURL(url);
+
+        window.decypharrUtils.createToast('Config exported successfully', 'success');
+    } catch (error) {
+        window.decypharrUtils.createToast('Export failed: ' + error.message, 'error');
+    }
+}
+
+async function importConfig(file) {
+    if (!file) return;
+
+    if (!confirm('This will overwrite your current configuration. Are you sure?')) {
+        return;
+    }
+
+    try {
+        const formData = new FormData();
+        formData.append('file', file);
+
+        const response = await window.decypharrUtils.fetcher('/api/config/import', {
+            method: 'POST',
+            body: formData
+        });
+
+        const result = await response.json();
+
+        if (result.success) {
+            if (result.warnings && result.warnings.length > 0) {
+                window.decypharrUtils.createToast('Imported with warnings: ' + result.warnings.join(', '), 'warning');
+            } else {
+                window.decypharrUtils.createToast('Config imported successfully', 'success');
+            }
+            // Reload the page to reflect changes
+            setTimeout(() => location.reload(), 1500);
+        } else {
+            window.decypharrUtils.createToast('Import failed: ' + result.errors.join(', '), 'error');
+        }
+    } catch (error) {
+        window.decypharrUtils.createToast('Import failed: ' + error.message, 'error');
+    }
+}
+
 
