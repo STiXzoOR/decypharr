@@ -437,9 +437,18 @@ func (ad *AllDebrid) GetMountPath() string {
 }
 
 func (ad *AllDebrid) GetAvailableSlots() (int, error) {
-	// This function is a placeholder for AllDebrid
-	//TODO: Implement the logic to check available slots for AllDebrid
-	return 0, fmt.Errorf("GetAvailableSlots not implemented for AllDebrid")
+	torrents, err := ad.GetTorrents()
+	if err != nil {
+		return 0, err
+	}
+	// AllDebrid premium allows ~25 slots
+	const maxSlots = 25
+	activeCount := len(torrents)
+	available := maxSlots - activeCount - ad.minimumFreeSlot
+	if available < 0 {
+		return 0, nil
+	}
+	return available, nil
 }
 
 func (ad *AllDebrid) GetProfile() (*types.Profile, error) {

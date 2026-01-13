@@ -29,10 +29,11 @@ type DebridLink struct {
 
 	autoExpiresLinksAfter time.Duration
 
-	MountPath   string
-	logger      zerolog.Logger
-	checkCached bool
-	addSamples  bool
+	MountPath       string
+	logger          zerolog.Logger
+	checkCached     bool
+	addSamples      bool
+	minimumFreeSlot int
 
 	Profile *types.Profile `json:"profile,omitempty"`
 }
@@ -66,6 +67,7 @@ func New(dc config.Debrid, ratelimits map[string]ratelimit.Limiter) (*DebridLink
 		logger:                logger.New(dc.Name),
 		checkCached:           dc.CheckCached,
 		addSamples:            dc.AddSamples,
+		minimumFreeSlot:       dc.MinimumFreeSlot,
 	}, nil
 }
 
@@ -463,8 +465,19 @@ func (dl *DebridLink) GetMountPath() string {
 }
 
 func (dl *DebridLink) GetAvailableSlots() (int, error) {
-	//TODO: Implement the logic to check available slots for DebridLink
-	return 0, fmt.Errorf("GetAvailableSlots not implemented for DebridLink")
+	// Query active torrents from seedbox list
+	torrents, err := dl.getTorrents(0, 100)
+	if err != nil {
+		return 0, err
+	}
+	// DebridLink premium typically allows ~20 active torrents
+	const maxSlots = 20
+	activeCount := len(torrents)
+	available := maxSlots - activeCount - dl.minimumFreeSlot
+	if available < 0 {
+		return 0, nil
+	}
+	return available, nil
 }
 
 func (dl *DebridLink) GetProfile() (*types.Profile, error) {

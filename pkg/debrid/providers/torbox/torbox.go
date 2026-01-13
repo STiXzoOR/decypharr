@@ -36,10 +36,11 @@ type Torbox struct {
 	DownloadUncached bool
 	client           *request.Client
 
-	MountPath   string
-	logger      zerolog.Logger
-	checkCached bool
-	addSamples  bool
+	MountPath       string
+	logger          zerolog.Logger
+	checkCached     bool
+	addSamples      bool
+	minimumFreeSlot int
 }
 
 func New(dc config.Debrid, ratelimits map[string]ratelimit.Limiter) (*Torbox, error) {
@@ -72,6 +73,7 @@ func New(dc config.Debrid, ratelimits map[string]ratelimit.Limiter) (*Torbox, er
 		logger:                _log,
 		checkCached:           dc.CheckCached,
 		addSamples:            dc.AddSamples,
+		minimumFreeSlot:       dc.MinimumFreeSlot,
 	}, nil
 }
 
@@ -648,8 +650,24 @@ func (tb *Torbox) GetMountPath() string {
 }
 
 func (tb *Torbox) GetAvailableSlots() (int, error) {
-	//TODO: Implement the logic to check available slots for Torbox
-	return 0, fmt.Errorf("not implemented")
+	torrents, err := tb.getTorrents(0)
+	if err != nil {
+		return 0, err
+	}
+	// Torbox allows ~50 slots for premium
+	const maxSlots = 50
+	// Count only active torrents (not completed)
+	activeCount := 0
+	for _, t := range torrents {
+		if t.Status != "downloaded" {
+			activeCount++
+		}
+	}
+	available := maxSlots - activeCount - tb.minimumFreeSlot
+	if available < 0 {
+		return 0, nil
+	}
+	return available, nil
 }
 
 func (tb *Torbox) GetProfile() (*types.Profile, error) {
