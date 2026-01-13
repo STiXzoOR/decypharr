@@ -326,5 +326,8 @@ func (a *Arr) Refresh() {
 		Name: "RefreshMonitoredDownloads",
 	}
 
-	_, _ = a.Request(http.MethodPost, "api/v3/command", payload)
+	resp, _ := a.Request(http.MethodPost, "api/v3/command", payload)
+	if resp != nil {
+		resp.Body.Close()
+	}
 }
