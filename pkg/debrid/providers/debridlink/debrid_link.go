@@ -161,6 +161,7 @@ func (dl *DebridLink) GetTorrent(torrentId string) (*types.Torrent, error) {
 		MountPath:        dl.MountPath,
 		Debrid:           dl.name,
 		Added:            time.Unix(t.Created, 0).Format(time.RFC3339),
+		Files:            make(map[string]types.File),
 	}
 	cfg := config.Get()
 	for _, f := range t.Files {
