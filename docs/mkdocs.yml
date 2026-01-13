@@ -5,7 +5,6 @@ repo_url: https://github.com/sirrobot01/decypharr
 repo_name: sirrobot01/decypharr
 edit_uri: blob/main/docs
 
-
 extra_css:
   - styles/styles.css
 
@@ -69,9 +68,10 @@ nav:
       - Private Tracker Downloads: features/private-tracker-downloads.md
   - Guides:
       - Overview: guides/index.md
-      - Manual Downloading: guides/downloading.md
+      - Zurg Setup: guides/zurg-setup.md
       - Internal Mounting: guides/internal-mounting.md
-
+      - Manual Downloading: guides/downloading.md
+      - Reverse Proxy: guides/reverse-proxy.md
 
 plugins:
   - search
