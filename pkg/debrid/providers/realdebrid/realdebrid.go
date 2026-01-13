@@ -887,7 +887,7 @@ func (r *RealDebrid) GetProfile() (*types.Profile, error) {
 		return nil, err
 	}
 	var data profileResponse
-	if json.Unmarshal(resp, &data) != nil {
+	if err := json.Unmarshal(resp, &data); err != nil {
 		return nil, err
 	}
 	profile := &types.Profile{
@@ -911,7 +911,7 @@ func (r *RealDebrid) GetAvailableSlots() (int, error) {
 		return 0, nil
 	}
 	var data AvailableSlotsResponse
-	if json.Unmarshal(resp, &data) != nil {
+	if err := json.Unmarshal(resp, &data); err != nil {
 		return 0, fmt.Errorf("error unmarshalling available slots response: %w", err)
 	}
 	return data.TotalSlots - data.ActiveSlots - r.minimumFreeSlot, nil // Ensure we maintain minimum active pots
