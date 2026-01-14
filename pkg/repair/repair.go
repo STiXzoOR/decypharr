@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -663,14 +662,15 @@ func (r *Repair) getZurgBrokenFiles(job *Job, media arr.Content) []arr.ContentFi
 	brokenFiles := make([]arr.ContentFile, 0)
 
 	uniqueParents := collectFiles(media)
-	tr := &http.Transport{
-		TLSHandshakeTimeout: 60 * time.Second,
-		DialContext: (&net.Dialer{
-			Timeout:   20 * time.Second,
-			KeepAlive: 30 * time.Second,
-		}).DialContext,
+	// Use a simple http.Client for Zurg checks - the custom request.Client
+	// may have retry/header behavior that causes issues with Zurg
+	client := &http.Client{
+		Timeout: 30 * time.Second,
+		Transport: &http.Transport{
+			TLSHandshakeTimeout: 10 * time.Second,
+			DisableKeepAlives:   true, // Don't reuse connections
+		},
 	}
-	client := request.New(request.WithTimeout(0), request.WithTransport(tr))
 	// Access zurg url + symlink folder + first file(encoded)
 	// Parse base Zurg URL once
 	baseURL, err := url.Parse(r.ZurgURL)
@@ -721,6 +721,9 @@ func (r *Repair) getZurgBrokenFiles(job *Job, media arr.Content) []arr.ContentFi
 			}
 			// Ensure the raw path is preserved in the request
 			req.URL.RawPath = rawPath
+			// Set headers similar to curl to avoid potential Zurg quirks
+			req.Header.Set("User-Agent", "decypharr")
+			req.Header.Set("Accept", "*/*")
 
 			resp, err := client.Do(req)
 			if err != nil {
