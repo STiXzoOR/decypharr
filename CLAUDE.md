@@ -219,6 +219,36 @@ torrent := &types.Torrent{
 }
 ```
 
+## Git Workflow
+
+**Always use feature branches for changes that will merge to main.**
+
+1. Create a feature branch before making changes:
+
+   ```bash
+   git checkout -b feature/descriptive-name
+   ```
+
+2. Make changes and commit with descriptive messages
+3. Push branch and create PR:
+
+   ```bash
+   git push -u origin feature/descriptive-name
+   gh pr create --title "Title" --body "Description"
+   ```
+
+4. After PR is merged, switch back to main:
+   ```bash
+   git checkout main
+   git pull
+   ```
+
+Branch naming conventions:
+
+- `feature/` - New features or enhancements
+- `fix/` - Bug fixes
+- `docs/` - Documentation changes
+
 ## Documentation
 
 Full documentation available at the [docs site](https://github.com/sirrobot01/decypharr):
