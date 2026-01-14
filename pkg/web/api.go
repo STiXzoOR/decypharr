@@ -142,21 +142,29 @@ func (wb *Web) handleRepairMedia(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if req.Async {
-		go func() {
-			if err := _store.Repair().AddJob(arrs, req.MediaIds, req.AutoProcess, false); err != nil {
-				wb.logger.Error().Err(err).Msg("Failed to repair media")
-			}
-		}()
-		request.JSONResponse(w, "Repair process started", http.StatusOK)
+		jobID, err := _store.Repair().AddJob(arrs, req.MediaIds, req.AutoProcess, false)
+		if err != nil {
+			wb.logger.Error().Err(err).Msg("Failed to repair media")
+			http.Error(w, fmt.Sprintf("Failed to start repair: %v", err), http.StatusInternalServerError)
+			return
+		}
+		request.JSONResponse(w, RepairResponse{
+			Message: "Repair process started",
+			JobID:   jobID,
+		}, http.StatusOK)
 		return
 	}
 
-	if err := _store.Repair().AddJob([]string{req.ArrName}, req.MediaIds, req.AutoProcess, false); err != nil {
+	jobID, err := _store.Repair().AddJob([]string{req.ArrName}, req.MediaIds, req.AutoProcess, false)
+	if err != nil {
 		http.Error(w, fmt.Sprintf("Failed to repair: %v", err), http.StatusInternalServerError)
 		return
 	}
 
-	request.JSONResponse(w, "Repair completed", http.StatusOK)
+	request.JSONResponse(w, RepairResponse{
+		Message: "Repair completed",
+		JobID:   jobID,
+	}, http.StatusOK)
 }
 
 func (wb *Web) handleGetVersion(w http.ResponseWriter, r *http.Request) {

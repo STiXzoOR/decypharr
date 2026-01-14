@@ -47,6 +47,11 @@ type RepairRequest struct {
 	AutoProcess bool     `json:"autoProcess"`
 }
 
+type RepairResponse struct {
+	Message string `json:"message"`
+	JobID   string `json:"job_id,omitempty"`
+}
+
 //go:embed templates/*
 var content embed.FS
 
