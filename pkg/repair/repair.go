@@ -711,8 +711,9 @@ func (r *Repair) getZurgBrokenFiles(job *Job, media arr.Content) []arr.ContentFi
 				continue
 			}
 
-			// Create request with the properly encoded URL
-			req, err := http.NewRequest(http.MethodGet, fullURL, nil)
+			// Create HEAD request to check file availability without downloading
+			// HEAD is more efficient and matches how curl -I tests the endpoint
+			req, err := http.NewRequest(http.MethodHead, fullURL, nil)
 			if err != nil {
 				r.logger.Error().Err(err).Msgf("Failed to create request for %s", fullURL)
 				brokenFiles = append(brokenFiles, file)
