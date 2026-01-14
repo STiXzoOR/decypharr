@@ -711,31 +711,46 @@ func (r *Repair) getZurgBrokenFiles(job *Job, media arr.Content) []arr.ContentFi
 				continue
 			}
 
-			// Create HEAD request to check file availability without downloading
-			// HEAD is more efficient and matches how curl -I tests the endpoint
-			req, err := http.NewRequest(http.MethodHead, fullURL, nil)
-			if err != nil {
-				r.logger.Error().Err(err).Msgf("Failed to create request for %s", fullURL)
-				brokenFiles = append(brokenFiles, file)
-				continue
-			}
-			// Ensure the raw path is preserved in the request
-			req.URL.RawPath = rawPath
-			// Set headers similar to curl to avoid potential Zurg quirks
-			req.Header.Set("User-Agent", "decypharr")
-			req.Header.Set("Accept", "*/*")
+			// Check file availability with retry logic for Zurg lock/rate limit issues
+			var statusCode int
+			maxRetries := 3
+			for attempt := 0; attempt < maxRetries; attempt++ {
+				// Create HEAD request to check file availability without downloading
+				req, err := http.NewRequest(http.MethodHead, fullURL, nil)
+				if err != nil {
+					r.logger.Error().Err(err).Msgf("Failed to create request for %s", fullURL)
+					break
+				}
+				// Ensure the raw path is preserved in the request
+				req.URL.RawPath = rawPath
+				// Set headers similar to curl to avoid potential Zurg quirks
+				req.Header.Set("User-Agent", "decypharr")
+				req.Header.Set("Accept", "*/*")
 
-			resp, err := client.Do(req)
-			if err != nil {
-				r.logger.Error().Err(err).Msgf("Failed to reach %s", fullURL)
-				brokenFiles = append(brokenFiles, file)
-				continue
+				resp, err := client.Do(req)
+				if err != nil {
+					r.logger.Error().Err(err).Msgf("Failed to reach %s", fullURL)
+					statusCode = 0
+					break
+				}
+				statusCode = resp.StatusCode
+				resp.Body.Close()
+
+				// If success or permanent error, break
+				if statusCode >= 200 && statusCode < 300 {
+					break
+				}
+				// If 400/429/5xx, retry after delay (Zurg might be busy)
+				if statusCode == 400 || statusCode == 429 || statusCode >= 500 {
+					if attempt < maxRetries-1 {
+						r.logger.Debug().Msgf("Zurg returned HTTP %d for %s, retrying in %dms...", statusCode, fullURL, (attempt+1)*200)
+						time.Sleep(time.Duration((attempt+1)*200) * time.Millisecond)
+						continue
+					}
+				}
+				break
 			}
-			statusCode := resp.StatusCode
-			if err := resp.Body.Close(); err != nil {
-				r.logger.Error().Err(err).Msgf("Failed to close response body for %s", fullURL)
-				return nil
-			}
+
 			if statusCode < 200 || statusCode >= 300 {
 				r.logger.Debug().Msgf("Zurg returned HTTP %d for %s", statusCode, fullURL)
 				brokenFiles = append(brokenFiles, file)
@@ -743,6 +758,9 @@ func (r *Repair) getZurgBrokenFiles(job *Job, media arr.Content) []arr.ContentFi
 			}
 			// File is accessible via Zurg - HTTP 200 OK
 			r.logger.Trace().Msgf("Zurg returned HTTP %d for %s", statusCode, fullURL)
+
+			// Small delay between requests to avoid overwhelming Zurg
+			time.Sleep(50 * time.Millisecond)
 		}
 	}
 	if len(brokenFiles) == 0 {
