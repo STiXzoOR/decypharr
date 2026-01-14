@@ -14,6 +14,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/go-co-op/gocron/v2"
@@ -73,6 +74,11 @@ type Job struct {
 
 	Error string `json:"error"`
 
+	// Progress tracking
+	TotalItems     int32 `json:"total_items"`     // Total media items to check
+	CheckedItems   int32 `json:"checked_items"`   // Items checked so far
+	ProcessedItems int32 `json:"processed_items"` // Items processed (deleted/searched)
+
 	cancelFunc context.CancelFunc
 	ctx        context.Context
 }
@@ -125,7 +131,7 @@ func (r *Repair) Start(ctx context.Context) error {
 	} else {
 		_, err2 := r.scheduler.NewJob(jd, gocron.NewTask(func() {
 			r.logger.Info().Msgf("Repair job started at %s", time.Now().Format("15:04:05"))
-			if err := r.AddJob([]string{}, []string{}, r.autoProcess, true); err != nil {
+			if _, err := r.AddJob([]string{}, []string{}, r.autoProcess, true); err != nil {
 				r.logger.Error().Err(err).Msg("Error running repair job")
 			}
 		}))
@@ -196,6 +202,10 @@ func (r *Repair) reset(j *Job) {
 	j.FailedAt = time.Time{}
 	j.BrokenItems = nil
 	j.Error = ""
+	// Reset progress tracking
+	j.TotalItems = 0
+	j.CheckedItems = 0
+	j.ProcessedItems = 0
 	if j.Recurrent || j.Arrs == nil {
 		j.Arrs = r.getArrs([]string{}) // Get new arrs
 	}
@@ -261,11 +271,11 @@ func (r *Repair) preRunChecks() error {
 	return nil
 }
 
-func (r *Repair) AddJob(arrsNames []string, mediaIDs []string, autoProcess, recurrent bool) error {
+func (r *Repair) AddJob(arrsNames []string, mediaIDs []string, autoProcess, recurrent bool) (string, error) {
 	key := jobKey(arrsNames, mediaIDs)
 	job, ok := r.Jobs[key]
 	if job != nil && job.Status == JobStarted {
-		return fmt.Errorf("job already running")
+		return "", fmt.Errorf("job already running")
 	}
 	if !ok {
 		job = r.newJob(arrsNames, mediaIDs)
@@ -279,22 +289,13 @@ func (r *Repair) AddJob(arrsNames []string, mediaIDs []string, autoProcess, recu
 	go r.saveToFile()
 	go func() {
 		if err := r.repair(job); err != nil {
+			// Note: repair() already sets Status, Error, FailedAt, and CompletedAt
+			// before returning an error, so we just log here
 			r.logger.Error().Err(err).Msg("Error running repair")
-			if !errors.Is(job.ctx.Err(), context.Canceled) {
-				job.FailedAt = time.Now()
-				job.Error = err.Error()
-				job.Status = JobFailed
-				job.CompletedAt = time.Now()
-			} else {
-				job.FailedAt = time.Now()
-				job.Error = err.Error()
-				job.Status = JobFailed
-				job.CompletedAt = time.Now()
-			}
 		}
 		r.onComplete() // Clear caches and maps after job completion
 	}()
-	return nil
+	return job.ID, nil
 }
 
 func (r *Repair) StopJob(id string) error {
@@ -454,6 +455,9 @@ func (r *Repair) repairArr(job *Job, _arr string, tmdbId string) ([]arr.ContentF
 		r.logger.Info().Msgf("No %s media found", a.Name)
 		return brokenItems, nil
 	}
+
+	// Track total items for progress reporting
+	atomic.AddInt32(&job.TotalItems, int32(len(media)))
 	// Check first media to confirm mounts are accessible
 	if err := r.checkMountUp(media); err != nil {
 		r.logger.Error().Err(err).Msgf("Mount check failed for %s", a.Name)
@@ -476,6 +480,9 @@ func (r *Repair) repairArr(job *Job, _arr string, tmdbId string) ([]arr.ContentF
 				default:
 				}
 				items := r.getBrokenFiles(job, m)
+				// Track progress - item has been checked
+				atomic.AddInt32(&job.CheckedItems, 1)
+
 				if items != nil {
 					r.logger.Debug().Msgf("Found %d broken files for %s", len(items), m.Title)
 					if job.AutoProcess {
@@ -490,6 +497,9 @@ func (r *Repair) repairArr(job *Job, _arr string, tmdbId string) ([]arr.ContentF
 						if err := a.SearchMissing(items); err != nil {
 							r.logger.Debug().Msgf("Failed to search missing items for %s: %v", m.Title, err)
 						}
+
+						// Track processed items
+						atomic.AddInt32(&job.ProcessedItems, int32(len(items)))
 					}
 
 					mu.Lock()
@@ -815,6 +825,14 @@ func (r *Repair) ProcessJob(id string) error {
 		job.ctx, job.cancelFunc = context.WithCancel(r.ctx)
 	}
 
+	// Count total broken items for progress tracking
+	var totalBroken int32
+	for _, items := range brokenItems {
+		totalBroken += int32(len(items))
+	}
+	atomic.StoreInt32(&job.TotalItems, totalBroken)
+	atomic.StoreInt32(&job.ProcessedItems, 0) // Reset for processing phase
+
 	g, ctx := errgroup.WithContext(job.ctx)
 	g.SetLimit(r.workers)
 
@@ -844,6 +862,9 @@ func (r *Repair) ProcessJob(id string) error {
 				r.logger.Error().Err(err).Msgf("Failed to search missing items for %s", arrName)
 				return nil
 			}
+
+			// Track processed items
+			atomic.AddInt32(&job.ProcessedItems, int32(len(items)))
 			return nil
 		})
 	}
@@ -881,6 +902,8 @@ func (r *Repair) saveToFile() {
 	_ = os.WriteFile(r.filename, data, 0644)
 }
 
+const MaxJobHistory = 50 // Keep last 50 jobs in history
+
 func (r *Repair) loadFromFile() {
 	data, err := os.ReadFile(r.filename)
 	if err != nil && os.IsNotExist(err) {
@@ -894,15 +917,39 @@ func (r *Repair) loadFromFile() {
 		r.Jobs = make(map[string]*Job)
 		return
 	}
-	jobs := make(map[string]*Job)
-	for k, v := range _jobs {
-		if v.Status != JobPending {
-			// Skip jobs that are not pending processing due to reboot
-			continue
-		}
-		jobs[k] = v
+	// Load all jobs (not just pending) to preserve history
+	r.Jobs = _jobs
+	// Prune old jobs if we have too many
+	r.pruneOldJobs()
+}
+
+// pruneOldJobs removes oldest jobs if we exceed MaxJobHistory
+func (r *Repair) pruneOldJobs() {
+	if len(r.Jobs) <= MaxJobHistory {
+		return
 	}
-	r.Jobs = jobs
+
+	// Collect all jobs and sort by StartedAt (oldest first)
+	jobs := make([]*Job, 0, len(r.Jobs))
+	for _, job := range r.Jobs {
+		jobs = append(jobs, job)
+	}
+	sort.Slice(jobs, func(i, j int) bool {
+		return jobs[i].StartedAt.Before(jobs[j].StartedAt)
+	})
+
+	// Delete oldest jobs to get down to MaxJobHistory
+	toDelete := len(jobs) - MaxJobHistory
+	for i := 0; i < toDelete; i++ {
+		// Find and delete by key
+		for k, j := range r.Jobs {
+			if j.ID == jobs[i].ID {
+				delete(r.Jobs, k)
+				break
+			}
+		}
+	}
+	r.logger.Debug().Msgf("Pruned %d old jobs, keeping %d", toDelete, len(r.Jobs))
 }
 
 func (r *Repair) DeleteJobs(ids []string) {
