@@ -672,9 +672,16 @@ func (r *Repair) getZurgBrokenFiles(job *Job, media arr.Content) []arr.ContentFi
 	}
 	client := request.New(request.WithTimeout(0), request.WithTransport(tr))
 	// Access zurg url + symlink folder + first file(encoded)
+	// Parse base Zurg URL once
+	baseURL, err := url.Parse(r.ZurgURL)
+	if err != nil {
+		r.logger.Error().Err(err).Msgf("Failed to parse Zurg URL: %s", r.ZurgURL)
+		return nil
+	}
+
 	for parent, files := range uniqueParents {
 		r.logger.Debug().Msgf("Checking %s", parent)
-		torrentName := url.PathEscape(filepath.Base(parent))
+		torrentName := filepath.Base(parent)
 
 		if len(files) == 0 {
 			r.logger.Debug().Msgf("No files found for %s. Skipping", torrentName)
@@ -682,14 +689,39 @@ func (r *Repair) getZurgBrokenFiles(job *Job, media arr.Content) []arr.ContentFi
 		}
 
 		for _, file := range files {
-			encodedFile := url.PathEscape(file.TargetPath)
-			fullURL := fmt.Sprintf("%s/http/__all__/%s/%s", r.ZurgURL, torrentName, encodedFile)
+			// Build the path with proper encoding
+			// We need to use RawPath to preserve percent-encoding for special characters
+			// like [ ] that Go's URL parser would otherwise decode and not re-encode
+			rawPath := fmt.Sprintf("/http/__all__/%s/%s",
+				url.PathEscape(torrentName),
+				url.PathEscape(file.TargetPath))
+
+			// Construct URL with RawPath to preserve encoding
+			reqURL := &url.URL{
+				Scheme:  baseURL.Scheme,
+				Host:    baseURL.Host,
+				Path:    rawPath, // This gets decoded by Go
+				RawPath: rawPath, // This preserves our encoding
+			}
+			fullURL := reqURL.String()
+
 			if _, err := os.Stat(file.Path); os.IsNotExist(err) {
 				r.logger.Debug().Msgf("Broken symlink found: %s", fullURL)
 				brokenFiles = append(brokenFiles, file)
 				continue
 			}
-			resp, err := client.Get(fullURL)
+
+			// Create request with the properly encoded URL
+			req, err := http.NewRequest(http.MethodGet, fullURL, nil)
+			if err != nil {
+				r.logger.Error().Err(err).Msgf("Failed to create request for %s", fullURL)
+				brokenFiles = append(brokenFiles, file)
+				continue
+			}
+			// Ensure the raw path is preserved in the request
+			req.URL.RawPath = rawPath
+
+			resp, err := client.Do(req)
 			if err != nil {
 				r.logger.Error().Err(err).Msgf("Failed to reach %s", fullURL)
 				brokenFiles = append(brokenFiles, file)
