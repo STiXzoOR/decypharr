@@ -695,26 +695,18 @@ func (r *Repair) getZurgBrokenFiles(job *Job, media arr.Content) []arr.ContentFi
 				brokenFiles = append(brokenFiles, file)
 				continue
 			}
-			if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-				r.logger.Debug().Msgf("Failed to get download url for %s", fullURL)
-				if err := resp.Body.Close(); err != nil {
-					return nil
-				}
-				brokenFiles = append(brokenFiles, file)
-				continue
-			}
-			downloadUrl := resp.Request.URL.String()
-
+			statusCode := resp.StatusCode
 			if err := resp.Body.Close(); err != nil {
+				r.logger.Error().Err(err).Msgf("Failed to close response body for %s", fullURL)
 				return nil
 			}
-			if downloadUrl != "" {
-				r.logger.Trace().Msgf("Found download url: %s", downloadUrl)
-			} else {
-				r.logger.Debug().Msgf("Failed to get download url for %s", fullURL)
+			if statusCode < 200 || statusCode >= 300 {
+				r.logger.Debug().Msgf("Zurg returned HTTP %d for %s", statusCode, fullURL)
 				brokenFiles = append(brokenFiles, file)
 				continue
 			}
+			// File is accessible via Zurg - HTTP 200 OK
+			r.logger.Trace().Msgf("Zurg returned HTTP %d for %s", statusCode, fullURL)
 		}
 	}
 	if len(brokenFiles) == 0 {
