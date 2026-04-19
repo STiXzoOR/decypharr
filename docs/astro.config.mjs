@@ -81,6 +81,7 @@ export default defineConfig({
                         {label: 'Sonarr & Radarr', link: '/guides/arrs'},
                         {label: 'Repair Worker', link: '/guides/repair'},
                         {label: 'Hearsay', link: '/guides/hearsay'},
+                        {label: 'Reverse Proxy', link: '/guides/reverse-proxy'},
                     ],
                 },
                 {
