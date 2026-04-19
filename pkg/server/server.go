@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -131,7 +132,14 @@ func New(mgr *manager.Manager) *Server {
 	routes["/webdav"] = wd.Routes()
 	routes["/sabnzbd"] = sb.Routes()
 
-	r.Route(cfg.URLBase, func(r chi.Router) {
+	// URLBase is normalized to have a trailing slash (see config.setDefaults),
+	// but chi's StripSlashes middleware removes the trailing slash from incoming
+	// requests, so the route pattern must be registered without one.
+	urlBase := cfg.URLBase
+	if urlBase != "/" {
+		urlBase = strings.TrimSuffix(urlBase, "/")
+	}
+	r.Route(urlBase, func(r chi.Router) {
 		// Mount web routes
 		r.Mount("/", s.WebRoutes())
 
@@ -164,6 +172,15 @@ func New(mgr *manager.Manager) *Server {
 
 func (s *Server) SetRestartFunc(restartFunc func()) {
 	s.restartFunc = restartFunc
+}
+
+// redirectTo issues a 303 redirect to an internal path with the configured
+// URLBase prefixed. Needed when Decypharr is served under a subpath via a
+// reverse proxy (e.g. /decypharr/) — a bare http.Redirect to "/login" would
+// bypass the proxy mount.
+func (s *Server) redirectTo(w http.ResponseWriter, r *http.Request, path string) {
+	target := strings.TrimSuffix(s.urlBase, "/") + path
+	http.Redirect(w, r, target, http.StatusSeeOther)
 }
 
 func (s *Server) Restart() {
