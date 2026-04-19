@@ -167,6 +167,15 @@ func (s *Server) SetRestartFunc(restartFunc func()) {
 	s.restartFunc = restartFunc
 }
 
+// redirectTo issues a 303 redirect to an internal path with the configured
+// URLBase prefixed. Needed when Decypharr is served under a subpath via a
+// reverse proxy (e.g. /decypharr/) — a bare http.Redirect to "/login" would
+// bypass the proxy mount.
+func (s *Server) redirectTo(w http.ResponseWriter, r *http.Request, path string) {
+	target := strings.TrimSuffix(s.urlBase, "/") + path
+	http.Redirect(w, r, target, http.StatusSeeOther)
+}
+
 func (s *Server) Restart() {
 	if s.restartFunc != nil {
 		time.Sleep(200 * time.Millisecond)
