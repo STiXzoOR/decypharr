@@ -177,6 +177,9 @@ jobs:
 
   # Build and push multi-platform Docker images
   docker:
+    # Only upstream has the DOCKERHUB_* secrets — forks skip this job
+    # and publish binaries via the goreleaser job only.
+    if: github.repository == 'sirrobot01/decypharr'
     runs-on: ubuntu-latest
     needs: prepare
     steps:
