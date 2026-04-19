@@ -252,6 +252,10 @@ func (dl *DebridLink) UpdateTorrent(t *types.Torrent) error {
 		t.InfoHash = data.HashString
 	}
 	t.Added = time.Unix(data.Created, 0)
+	// Reset Files before repopulating from the API response so that stale
+	// entries don't leak across updates, and the map is non-nil before the
+	// indexed assignment below.
+	t.Files = make(map[string]types.File)
 	cfg := config.Get()
 	now := time.Now()
 	for _, f := range data.Files {
@@ -331,6 +335,8 @@ func (dl *DebridLink) SubmitMagnet(t *types.Torrent) (*types.Torrent, error) {
 	t.OriginalFilename = name
 	t.Debrid = dl.config.Name
 	t.Added = time.Unix(data.Created, 0)
+	// See comment in UpdateTorrent — same reason for the reset.
+	t.Files = make(map[string]types.File)
 	now := time.Now()
 	for _, f := range data.Files {
 		file := types.File{
