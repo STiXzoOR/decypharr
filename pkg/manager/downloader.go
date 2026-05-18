@@ -39,6 +39,12 @@ const (
 	symlinkReadyMaxInterval     = 2 * time.Second
 	symlinkLogEveryAttempts     = 10
 	symlinkLogSampleSize        = 8
+	// symlinkDeepScanFallbackAfter is the attempt count at which we give up on
+	// cheap candidate-path probing and walk the mount's parent directory
+	// looking for any folder whose children include a matching filename. This
+	// is the last-resort path resolver for mounts that name folders in a way
+	// neither entry.Name nor entry.OriginalFilename predicts.
+	symlinkDeepScanFallbackAfter = 8
 )
 
 type downloadLogMeta struct {
@@ -273,10 +279,38 @@ func (d *Downloader) createSymlinksWhenMountFilesAppear(entry *storage.Entry, fi
 		return nil
 	}
 
+	// scanRoot is the directory we feed into checkDirectory each tick. It starts
+	// equal to mountPath (preserving the existing behaviour for users on
+	// decypharr's own webdav, where the path constructed by GetTorrentMountPath
+	// is always correct) and is rewritten if resolveMountScanRoot or the deep
+	// fallback finds the actual directory at a different location.
+	scanRoot := mountPath
 	for len(remainingFiles) > 0 {
 		attempt++
 		scanErr = nil
-		if err := checkDirectory(mountPath); err != nil {
+
+		if scanRoot == mountPath {
+			if alt := resolveMountScanRoot(entry, mountPath); alt != mountPath {
+				d.logger.Info().
+					Str("entry", entry.Name).
+					Str("expected", mountPath).
+					Str("resolved", alt).
+					Msg("Mount path differs from expected, scanning resolved folder")
+				scanRoot = alt
+			} else if attempt > symlinkDeepScanFallbackAfter {
+				if found := findMountFolderContainingFiles(filepath.Dir(mountPath), remainingFiles); found != "" {
+					d.logger.Info().
+						Str("entry", entry.Name).
+						Str("expected", mountPath).
+						Str("resolved", found).
+						Int("after_attempts", attempt).
+						Msg("Mount path resolved via deep scan of parent directory")
+					scanRoot = found
+				}
+			}
+		}
+
+		if err := checkDirectory(scanRoot); err != nil {
 			return nil, err
 		}
 		lastScanErr = scanErr
@@ -297,6 +331,7 @@ func (d *Downloader) createSymlinksWhenMountFilesAppear(entry *storage.Entry, fi
 				Err(lastScanErr).
 				Str("entry", entry.Name).
 				Str("mount_path", mountPath).
+				Str("scan_root", scanRoot).
 				Int("pending", len(remainingFiles)).
 				Strs("sample", pendingMountFileNames(remainingFiles, symlinkLogSampleSize)).
 				Msg("Waiting for mount files before creating symlinks")
