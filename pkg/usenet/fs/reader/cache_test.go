@@ -276,8 +276,21 @@ func TestSegmentCacheDiskEviction(t *testing.T) {
 		}
 	}
 
-	if stats.Evictions.Load() == 0 {
-		t.Errorf("expected evictions when disk limit exceeded")
+	// Eviction runs asynchronously: Put → signalEvict (non-blocking) → background
+	// evictLoop drains over-budget segments. After 5×1000 bytes against a 2000
+	// byte budget, we expect 3 evictions so the two newest survive. Wait for
+	// the background goroutine to catch up before asserting.
+	const wantEvictions = 3
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if stats.Evictions.Load() >= wantEvictions {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+
+	if got := stats.Evictions.Load(); got < wantEvictions {
+		t.Errorf("expected at least %d evictions when disk limit exceeded, got %d", wantEvictions, got)
 	}
 
 	// The most recent segments should still be available
