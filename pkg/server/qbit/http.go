@@ -189,6 +189,13 @@ func writeTorrentAddError(w http.ResponseWriter, err error) {
 		response.Permanent = typed.IsPermanent()
 	}
 
+	// A provider refusing one release is not the client being down. Sonarr v5 and Radarr only
+	// read 409 from /torrents/add as "this release was rejected"; any other error makes them
+	// park every remaining torrent in the batch as if the client were unavailable.
+	if status == http.StatusUnavailableForLegalReasons || status == http.StatusNotFound {
+		status = http.StatusConflict
+	}
+
 	utils.JSONResponse(w, response, status)
 }
 
